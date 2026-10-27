@@ -4,3 +4,4 @@
 /dev/backups/
 /dev/.env
 /tests/.phpunit.result.cache
+__pycache__/
