@@ -43,20 +43,25 @@ final class Plugin_List {
 	);
 
 	/**
-	 * @param mixed  $active Active plugins in the backup (the option value, possibly damaged).
-	 * @param string $own    This plugin's basename.
-	 * @param bool   $https  Whether this site is served over HTTPS.
-	 * @return array active, deactivated.
+	 * @param mixed         $active       Active plugins in the restored options (possibly damaged; ai1wm empties them).
+	 * @param string        $own          This plugin's basename.
+	 * @param bool          $https        Whether this site is served over HTTPS.
+	 * @param string[]      $from_package Plugins package.json lists as active, where ai1wm records them.
+	 * @param callable|null $installed    Whether a plugin's main file is there; null to keep them all.
+	 * @return array active, deactivated, missing.
 	 */
-	public static function for_restored_site( $active, $own, $https ) {
+	public static function for_restored_site( $active, $own, $https, array $from_package = array(), $installed = null ) {
 		$kept        = array();
 		$deactivated = array();
-		foreach ( is_array( $active ) ? $active : array() as $plugin ) {
-			if ( ! is_string( $plugin ) || in_array( $plugin, $kept, true ) ) {
+		$missing     = array();
+		foreach ( array_merge( is_array( $active ) ? $active : array(), $from_package ) as $plugin ) {
+			if ( ! is_string( $plugin ) || in_array( $plugin, $kept, true ) || in_array( $plugin, $deactivated, true ) || in_array( $plugin, $missing, true ) ) {
 				continue;
 			}
 			if ( self::is_one_of( $plugin, self::LOCKOUT ) || ( ! $https && self::is_one_of( $plugin, self::FORCE_HTTPS ) ) ) {
 				$deactivated[] = $plugin;
+			} elseif ( $installed && $plugin !== $own && ! $installed( $plugin ) ) {
+				$missing[] = $plugin;
 			} else {
 				$kept[] = $plugin;
 			}
@@ -67,6 +72,7 @@ final class Plugin_List {
 		return array(
 			'active'      => $kept,
 			'deactivated' => $deactivated,
+			'missing'     => $missing,
 		);
 	}
 

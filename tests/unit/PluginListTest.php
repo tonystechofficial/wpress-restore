@@ -42,6 +42,23 @@ final class PluginListTest extends TestCase {
 		$this->assertSame( array( 'wps-hide-login/wps-hide-login.php' ), $result['deactivated'] );
 	}
 
+	public function test_activates_the_plugins_the_backup_ran_when_the_dump_lists_none() {
+		$result = Plugin_List::for_restored_site( array(), self::OWN, true, array( 'akismet/akismet.php', 'hello.php' ) );
+
+		$this->assertSame( array( 'akismet/akismet.php', 'hello.php', self::OWN ), $result['active'] );
+	}
+
+	public function test_leaves_out_plugins_whose_files_are_not_there() {
+		$installed = static function ( $plugin ) {
+			return 'hello.php' !== $plugin;
+		};
+
+		$result = Plugin_List::for_restored_site( array(), self::OWN, true, array( 'akismet/akismet.php', 'hello.php' ), $installed );
+
+		$this->assertSame( array( 'akismet/akismet.php', self::OWN ), $result['active'] );
+		$this->assertSame( array( 'hello.php' ), $result['missing'] );
+	}
+
 	public function test_a_damaged_list_leaves_only_this_plugin() {
 		$this->assertSame( array( self::OWN ), Plugin_List::for_restored_site( 'not a list', self::OWN, true )['active'] );
 	}

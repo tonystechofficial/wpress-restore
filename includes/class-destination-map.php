@@ -39,6 +39,7 @@ final class Destination_Map {
 	/** Entries skipped with everything below them. */
 	const SKIPPED_TREES = array(
 		'ai1wm-backups',
+		'wpress-restore',
 		'themes/functions.php',
 		'uploads/elementor/css',
 		'uploads/civicrm/civicrm.settings.php',

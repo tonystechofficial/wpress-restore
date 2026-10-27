@@ -1,0 +1,84 @@
+# Two WordPress sites for testing restores end to end.
+#   Site A (http://localhost:8081): MySQL 8, prefix wp_, makes backups with All-in-One WP Migration.
+#   Site B (http://localhost:8082): MariaDB 11.4, prefix wpb_, restores them with this plugin.
+# PHP limits mimic shared hosting: 2 MB uploads, 30 s per request, 128 MB of memory.
+name: wpress-restore-dev
+
+services:
+  db-a:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: site_a
+      MYSQL_USER: wp
+      MYSQL_PASSWORD: wp
+    volumes: [db-a:/var/lib/mysql]
+
+  db-b:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: site_b
+      MARIADB_USER: wp
+      MARIADB_PASSWORD: wp
+    volumes: [db-b:/var/lib/mysql]
+
+  site-a:
+    image: wordpress:php8.3-apache
+    depends_on: [db-a]
+    ports: ["8081:80"]
+    environment:
+      WORDPRESS_DB_HOST: db-a
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_DB_NAME: site_a
+      WORDPRESS_TABLE_PREFIX: wp_
+    volumes:
+      - html-a:/var/www/html
+      - ./php-hosting.ini:/usr/local/etc/php/conf.d/zz-hosting.ini:ro
+
+  site-b:
+    image: wordpress:php8.3-apache
+    depends_on: [db-b]
+    ports: ["8082:80"]
+    environment:
+      WORDPRESS_DB_HOST: db-b
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_DB_NAME: site_b
+      WORDPRESS_TABLE_PREFIX: wpb_
+    volumes:
+      - html-b:/var/www/html
+      - ./php-hosting.ini:/usr/local/etc/php/conf.d/zz-hosting.ini:ro
+
+  cli-a:
+    image: wordpress:cli-php8.3
+    depends_on: [site-a]
+    user: "33:33"
+    environment:
+      WORDPRESS_DB_HOST: db-a
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_DB_NAME: site_a
+      WORDPRESS_TABLE_PREFIX: wp_
+    volumes: [html-a:/var/www/html]
+    entrypoint: ["sleep", "infinity"]
+
+  cli-b:
+    image: wordpress:cli-php8.3
+    depends_on: [site-b]
+    user: "33:33"
+    environment:
+      WORDPRESS_DB_HOST: db-b
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_DB_NAME: site_b
+      WORDPRESS_TABLE_PREFIX: wpb_
+    volumes: [html-b:/var/www/html]
+    entrypoint: ["sleep", "infinity"]
+
+volumes:
+  db-a:
+  db-b:
+  html-a:
+  html-b:

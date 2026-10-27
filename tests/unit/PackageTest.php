@@ -14,6 +14,7 @@ final class PackageTest extends TestCase {
 		$this->assertSame( '/home/old/public_html/', $package->old_site()['absolute'] );
 		$this->assertTrue( $package->old_site()['replace_email'] );
 		$this->assertSame( array( 'akismet/akismet.php' ), $package->plugins() );
+		$this->assertSame( array( 'twentytwentyfour', 'twentytwentyfour' ), array( $package->template(), $package->stylesheet() ) );
 		$this->assertSame( '6.8.3', $package->wordpress_version() );
 		$this->assertSame( 'wp_', $package->table_prefix() );
 		$this->assertFalse( $package->is_encrypted() );

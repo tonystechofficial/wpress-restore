@@ -94,6 +94,11 @@ final class Package {
 	}
 
 	/** @return string */
+	public function template() {
+		return $this->text( array( 'Template' ) );
+	}
+
+	/** @return string */
 	public function stylesheet() {
 		return $this->text( array( 'Stylesheet' ) );
 	}
