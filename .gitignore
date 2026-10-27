@@ -1,0 +1,5 @@
+/tools/
+/dist/
+/dev/data/
+/dev/backups/
+/dev/.env
