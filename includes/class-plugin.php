@@ -227,6 +227,8 @@ final class Plugin {
 				default:
 					self::fail( __( 'Unknown operation.', 'wpress-restore' ), 'op', 400 );
 			}
+		} catch ( \OutOfBoundsException $e ) {
+			self::fail( $e->getMessage(), 'not_found', 404 );
 		} catch ( \Throwable $e ) {
 			self::fail( $e->getMessage(), 'error', 500 );
 		}

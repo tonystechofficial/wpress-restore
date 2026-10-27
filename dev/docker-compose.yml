@@ -1,6 +1,7 @@
 # Two WordPress sites for testing restores end to end.
 #   Site A (http://localhost:8081): MySQL 8, prefix wp_, makes backups with All-in-One WP Migration.
-#   Site B (http://localhost:8082): MariaDB 11.4, prefix wpb_, restores them with this plugin.
+#   Site B (http://localhost:8082): MariaDB 11.4 (DB_B_IMAGE=mariadb:10.6 or mysql:5.7 to vary), prefix wpb_,
+#   restores them with this plugin.
 # PHP limits mimic shared hosting: 2 MB uploads, 30 s per request, 128 MB of memory.
 name: wpress-restore-dev
 
@@ -15,12 +16,12 @@ services:
     volumes: [db-a:/var/lib/mysql]
 
   db-b:
-    image: mariadb:11.4
+    image: ${DB_B_IMAGE:-mariadb:11.4}
     environment:
-      MARIADB_ROOT_PASSWORD: root
-      MARIADB_DATABASE: site_b
-      MARIADB_USER: wp
-      MARIADB_PASSWORD: wp
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: site_b
+      MYSQL_USER: wp
+      MYSQL_PASSWORD: wp
     volumes: [db-b:/var/lib/mysql]
 
   site-a:

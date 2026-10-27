@@ -59,6 +59,13 @@ final class PluginListTest extends TestCase {
 		$this->assertSame( array( 'hello.php' ), $result['missing'] );
 	}
 
+	public function test_finds_all_in_one_wp_migration_and_its_extensions_among_this_site_plugins() {
+		$live = array( 'akismet/akismet.php', 'all-in-one-wp-migration/all-in-one-wp-migration.php', 'all-in-one-wp-migration-unlimited-extension/all-in-one-wp-migration-unlimited-extension.php' );
+
+		$this->assertSame( array_slice( $live, 1 ), Plugin_List::servmask( $live ) );
+		$this->assertSame( array(), Plugin_List::servmask( 'damaged' ) );
+	}
+
 	public function test_a_damaged_list_leaves_only_this_plugin() {
 		$this->assertSame( array( self::OWN ), Plugin_List::for_restored_site( 'not a list', self::OWN, true )['active'] );
 	}

@@ -48,7 +48,7 @@ final class Backups {
 	 * @param string $name          Name.
 	 * @param bool   $allow_partial Whether an unfinished upload qualifies.
 	 * @return string The name.
-	 * @throws \RuntimeException When it is not.
+	 * @throws \OutOfBoundsException When it is not.
 	 */
 	public static function find( $name, $allow_partial = false ) {
 		foreach ( self::all() as $backup ) {
@@ -56,7 +56,7 @@ final class Backups {
 				return $name;
 			}
 		}
-		throw new \RuntimeException( 'This backup is no longer in the backups folder.' );
+		throw new \OutOfBoundsException( 'This backup is no longer in the backups folder: reload the page.' );
 	}
 
 	/**

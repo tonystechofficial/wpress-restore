@@ -266,7 +266,14 @@ final class Restore {
 			if ( $scan['offset'] + Archive_Format::HEADER_SIZE > $size ) {
 				throw new Archive_Exception( 'The backup file is incomplete: it stops before its end marker. Upload it again (in binary mode if you use FTP).' );
 			}
-			$header = $this->read_header( $archive, $scan['offset'] );
+			try {
+				$header = $this->read_header( $archive, $scan['offset'] );
+			} catch ( Archive_Exception $e ) {
+				if ( 0 === $scan['offset'] ) {
+					throw new Archive_Exception( 'This file is not a .wpress backup, or it is damaged from its very start.' );
+				}
+				throw $e;
+			}
 			if ( 'eof' === $header['type'] ) {
 				if ( $scan['offset'] + Archive_Format::HEADER_SIZE !== $size || ( null !== $header['archive_size'] && $header['archive_size'] !== $scan['offset'] ) ) {
 					throw new Archive_Exception( 'The backup file does not end where its end marker says: it is damaged.' );
@@ -751,7 +758,7 @@ final class Restore {
 	private function adjust_options( Database $db, array $tables, $prefix, array &$result ) {
 		$options = $tables[ $prefix . 'options' ];
 		$package = $this->package();
-		$live    = array_fill_keys( array( 'siteurl', 'home', 'upload_path', 'upload_url_path', 'template', 'stylesheet' ), '' );
+		$live    = array_fill_keys( array( 'siteurl', 'home', 'upload_path', 'upload_url_path', 'template', 'stylesheet', 'active_plugins' ), '' );
 		foreach ( $db->rows( "SELECT option_name, option_value FROM `{$prefix}options` WHERE option_name IN ('" . implode( "', '", array_keys( $live ) ) . "')" ) as $row ) {
 			$live[ $row['option_name'] ] = (string) $row['option_value'];
 		}
@@ -776,7 +783,7 @@ final class Restore {
 			self::unserialize( $this->option( $db, $options, 'active_plugins' ) ),
 			Site::basename(),
 			Site::uses_https(),
-			$package->plugins(),
+			array_merge( $package->plugins(), Plugin_List::servmask( self::unserialize( $live['active_plugins'] ) ) ),
 			static function ( $plugin ) {
 				return is_file( WP_PLUGIN_DIR . '/' . $plugin );
 			}

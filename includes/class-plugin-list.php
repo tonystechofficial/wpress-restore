@@ -77,6 +77,25 @@ final class Plugin_List {
 	}
 
 	/**
+	 * All-in-One WP Migration and its extensions among this site's active plugins. Its backups
+	 * leave them out of their plugin list, and ai1wm keeps itself active after an import: so does
+	 * this restore, for a site that runs it.
+	 *
+	 * @param mixed $live This site's active plugins before the restore.
+	 * @return string[]
+	 */
+	public static function servmask( $live ) {
+		return array_values(
+			array_filter(
+				is_array( $live ) ? $live : array(),
+				static function ( $plugin ) {
+					return is_string( $plugin ) && 0 === strpos( $plugin, 'all-in-one-wp-migration' );
+				}
+			)
+		);
+	}
+
+	/**
 	 * Whether a plugin is one of $known, even installed under a renamed folder.
 	 *
 	 * @param string   $plugin Basename.
