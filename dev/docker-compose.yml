@@ -78,8 +78,48 @@ services:
     volumes: [html-b:/var/www/html]
     entrypoint: ["sleep", "infinity"]
 
+  # An old host, started with --profile php74: WordPress 6.1 on PHP 7.4, MariaDB 10.6, prefix wpc_.
+  db-c:
+    image: mariadb:10.6
+    profiles: [php74]
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: site_c
+      MYSQL_USER: wp
+      MYSQL_PASSWORD: wp
+
+  site-c:
+    image: wordpress:php7.4-apache
+    profiles: [php74]
+    depends_on: [db-c]
+    ports: ["8083:80"]
+    environment:
+      WORDPRESS_DB_HOST: db-c
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_DB_NAME: site_c
+      WORDPRESS_TABLE_PREFIX: wpc_
+    volumes:
+      - html-c:/var/www/html
+      - ./php-hosting.ini:/usr/local/etc/php/conf.d/zz-hosting.ini:ro
+
+  cli-c:
+    image: wordpress:cli-php7.4
+    profiles: [php74]
+    depends_on: [site-c]
+    user: "33:33"
+    environment:
+      WORDPRESS_DB_HOST: db-c
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_DB_NAME: site_c
+      WORDPRESS_TABLE_PREFIX: wpc_
+    volumes: [html-c:/var/www/html]
+    entrypoint: ["sleep", "infinity"]
+
 volumes:
   db-a:
   db-b:
   html-a:
   html-b:
+  html-c:

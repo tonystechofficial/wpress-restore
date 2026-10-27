@@ -410,6 +410,8 @@
 
 	function warningText( warning ) {
 		switch ( warning.about ) {
+			case 'passwords':
+				return format( t.warnPasswords, warning.backup, warning.here );
 			case 'wordpress':
 				return format( t.warnWordpress, warning.backup, warning.here );
 			case 'php':
@@ -439,7 +441,8 @@
 		);
 		panel.appendChild( el( 'p', {}, s.same_site ? t.sameSite : format( t.addressChange, s.source, cfg.home ) ) );
 		s.warnings.forEach( function ( warning ) {
-			panel.appendChild( el( 'div', { className: 'notice notice-warning inline' }, el( 'p', {}, warningText( warning ) ) ) );
+			var severity = 'passwords' === warning.about ? 'notice-error' : 'notice-warning';
+			panel.appendChild( el( 'div', { className: 'notice inline ' + severity }, el( 'p', {}, warningText( warning ) ) ) );
 		} );
 		panel.appendChild( el( 'p', {}, t.whatHappens ) );
 		panel.appendChild( el( 'p', {}, el( 'strong', {}, t.loginAfter ) ) );

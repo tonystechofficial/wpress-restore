@@ -137,6 +137,14 @@ final class Package {
 	public function warnings( array $here ) {
 		$warnings  = array();
 		$wordpress = $this->wordpress_version();
+		// WordPress 6.8 stores passwords with bcrypt ($wp$2y$), which earlier versions cannot check.
+		if ( '' !== $wordpress && version_compare( $wordpress, '6.8', '>=' ) && version_compare( $here['wordpress'], '6.8', '<' ) ) {
+			$warnings[] = array(
+				'about'  => 'passwords',
+				'backup' => $wordpress,
+				'here'   => $here['wordpress'],
+			);
+		}
 		if ( '' !== $wordpress && version_compare( $wordpress, $here['wordpress'], '>' ) ) {
 			$warnings[] = array(
 				'about'  => 'wordpress',

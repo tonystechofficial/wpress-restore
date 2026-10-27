@@ -64,6 +64,7 @@ final class Strings {
 			'password'       => __( 'Backup password', 'wpress-restore' ),
 			'addressChange'  => __( 'Addresses in the content will move from %1$s to %2$s.', 'wpress-restore' ),
 			'sameSite'       => __( 'This backup was made on this same site.', 'wpress-restore' ),
+			'warnPasswords'  => __( 'The backup comes from WordPress %1$s, which stores passwords in a format WordPress %2$s cannot check: after the restore, nobody could log in. Update WordPress to 6.8 or later first, then restore.', 'wpress-restore' ),
 			'warnWordpress'  => __( 'The backup comes from WordPress %1$s and this site runs %2$s: update WordPress after the restore if something misbehaves.', 'wpress-restore' ),
 			'warnPhp'        => __( 'The backup comes from PHP %1$s and this server runs PHP %2$s: some plugins may need the newer version.', 'wpress-restore' ),
 			'warnDisk'       => __( 'The restore needs about %1$s of disk space and only %2$s seems free.', 'wpress-restore' ),

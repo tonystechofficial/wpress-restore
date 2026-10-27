@@ -61,6 +61,7 @@ Tested end to end with real All-in-One WP Migration 7.112 exports: MySQL 8 → M
 - WordPress networks (multisite).
 - Addresses hidden in base64 by a few page builders (WPBakery raw HTML blocks, Oxygen, Avada, BeTheme, OptimizePress) are not moved when the domain changes; All-in-One WP Migration handles those. Restoring onto the same address is unaffected.
 - Rows are imported one statement at a time, as the dump writes them: a database of millions of rows takes minutes.
+- A backup from WordPress 6.8 or later restored onto an older WordPress: the backup's passwords use the bcrypt format older versions cannot check, so nobody can log in until WordPress is updated. The summary says so in red before you confirm. Update WordPress first.
 
 ## Security notes
 

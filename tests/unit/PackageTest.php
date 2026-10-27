@@ -94,6 +94,22 @@ final class PackageTest extends TestCase {
 		);
 	}
 
+	public function test_warns_that_nobody_could_log_in_when_wordpress_is_older_than_the_backup_password_format() {
+		$package = Package::from_json( Ai1wm::package( array( 'WordPress' => array( 'Version' => '7.1.3' ) ) ) );
+
+		$warnings = $package->warnings( array( 'wordpress' => '6.1.1', 'php' => '8.3.0' ) );
+
+		$this->assertContains( array( 'about' => 'passwords', 'backup' => '7.1.3', 'here' => '6.1.1' ), $warnings );
+	}
+
+	public function test_no_password_warning_when_both_sides_hash_passwords_alike() {
+		$recent = Package::from_json( Ai1wm::package( array( 'WordPress' => array( 'Version' => '6.8' ) ) ) );
+		$older  = Package::from_json( Ai1wm::package( array( 'WordPress' => array( 'Version' => '6.7.2' ) ) ) );
+
+		$this->assertNotContains( 'passwords', array_column( $recent->warnings( array( 'wordpress' => '6.8.1', 'php' => '8.3.0' ) ), 'about' ) );
+		$this->assertNotContains( 'passwords', array_column( $older->warnings( array( 'wordpress' => '6.1.1', 'php' => '8.3.0' ) ), 'about' ) );
+	}
+
 	public function test_no_warning_for_the_same_or_older_versions() {
 		$package = Package::from_json( Ai1wm::package( array( 'PHP' => array( 'Version' => '8.2.0' ) ) ) );
 
