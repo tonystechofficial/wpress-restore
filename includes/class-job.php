@@ -158,7 +158,8 @@ final class Job {
 	 * @return bool False when another request holds it and $wait is false.
 	 */
 	public function lock( $wait = false ) {
-		$this->lock = fopen( $this->path( 'lock' ), 'c' );
+		// A host may disable flock(); on PHP 8 calling it would then be fatal. The restore runs unlocked.
+		$this->lock = function_exists( 'flock' ) ? fopen( $this->path( 'lock' ), 'c' ) : false;
 		if ( ! $this->lock ) {
 			return true;
 		}
@@ -170,7 +171,7 @@ final class Job {
 	/** Releases the step lock. */
 	public function unlock() {
 		if ( $this->lock ) {
-			flock( $this->lock, LOCK_UN );
+			flock( $this->lock, LOCK_UN ); // Only reached when flock() exists: lock() opens no handle otherwise.
 			fclose( $this->lock );
 			$this->lock = null;
 		}

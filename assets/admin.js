@@ -207,6 +207,13 @@
 			uploadMessage( format( t.uploadFailed, error.message ), 'error' );
 			return;
 		}
+		if ( begin.done ) {
+			// An earlier upload of this file had finished: nothing left to send.
+			state.backups = begin.backups;
+			renderBackups();
+			uploadMessage( format( t.uploadDone, begin.name ), 'success' );
+			return;
+		}
 		state.uploading = true;
 		sendButton.disabled = true;
 		fileInput.disabled = true;
@@ -297,6 +304,13 @@
 				if ( ! state.running ) {
 					break;
 				}
+				if ( 'finalizing' === state.job.status && 400 === error.status ) {
+					// WordPress answers "0" to a session that no longer exists: the switch happened.
+					state.running = false;
+					state.loggedOut = true;
+					renderJob();
+					return;
+				}
 				if ( ( 'network' === error.code || 'server' === error.code ) && ++failures <= 5 ) {
 					renderJob( format( t.retrying, failures * 5 ) );
 					await sleep( failures * 5000 );
@@ -386,6 +400,11 @@
 	}
 
 	function renderWorking( job, message, isError ) {
+		if ( state.loggedOut ) {
+			panel.appendChild( el( 'div', { className: 'notice notice-success inline' }, el( 'p', {}, el( 'strong', {}, t.switchedLoggedOut ) ) ) );
+			panel.appendChild( el( 'p', { className: 'wpr-buttons' }, el( 'a', { className: 'button button-primary', href: cfg.loginUrl }, t.logIn ) ) );
+			return;
+		}
 		panel.appendChild( phaseList( job.status ) );
 		panel.appendChild( progressBar( job.progress ) );
 		if ( message ) {
@@ -398,7 +417,8 @@
 			}
 			buttons.appendChild( button( t.resume, run, true ) );
 		}
-		if ( ! job.switching ) {
+		// The switch may happen inside the request that is running: past this point, only finishing makes sense.
+		if ( 'finalizing' !== job.status && ! job.switching ) {
 			buttons.appendChild( cancelButton() );
 		}
 		panel.appendChild( buttons );
@@ -507,12 +527,12 @@
 			buttons.appendChild( button( t.deleteBackup, function () {
 				if ( window.confirm( format( t.confirmDelete, job.backup ) ) ) {
 					call( 'delete', { name: job.backup } ).then( function () {
-						return act( 'cancel' );
+						return act( 'dismiss' );
 					} ).catch( report );
 				}
 			} ) );
 			buttons.appendChild( button( t.dismiss, function () {
-				act( 'cancel' ).catch( report );
+				act( 'dismiss' ).catch( report );
 			} ) );
 		}
 		buttons.appendChild( logButton( logHolder ) );

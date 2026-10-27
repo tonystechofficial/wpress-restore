@@ -91,6 +91,24 @@ final class Sql_String {
 	}
 
 	/**
+	 * The statement with every quoted run emptied, to look for keywords without matching quoted text.
+	 *
+	 * @param string $sql Statement.
+	 * @return string
+	 */
+	public static function without_quoted( $sql ) {
+		return self::walk(
+			$sql,
+			static function ( $code ) {
+				return $code;
+			},
+			static function ( $quoted, $quote ) {
+				return $quote . $quote;
+			}
+		);
+	}
+
+	/**
 	 * Removes /* *\/ comments outside quotes, whatever they contain.
 	 *
 	 * @param string $sql Statement.

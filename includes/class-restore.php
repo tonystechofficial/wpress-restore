@@ -79,10 +79,13 @@ final class Restore {
 	public static function start( $backup ) {
 		$current = Job::current();
 		if ( $current ) {
-			if ( ! in_array( $current->get( 'status' ), array( 'done', 'ready', 'failed' ), true ) ) {
+			if ( 'done' === $current->get( 'status' ) ) {
+				( new self( $current ) )->dismiss();
+			} elseif ( in_array( $current->get( 'status' ), array( 'ready', 'failed' ), true ) ) {
+				( new self( $current ) )->cancel();
+			} else {
 				throw new \RuntimeException( 'A restore is already under way: let it finish or cancel it first.' );
 			}
-			( new self( $current ) )->cancel();
 		}
 		$path = Site::backups_dir() . '/' . $backup;
 		clearstatcache( true, $path );
@@ -119,7 +122,10 @@ final class Restore {
 			if ( isset( self::PHASES[ $status ] ) ) {
 				$this->started = microtime( true );
 				$this->budget  = self::budget();
-				$this->check_backup();
+				// Once switched, the restore no longer reads the backup: moving it must not block the end.
+				if ( ! $this->job->get( 'swapped' ) ) {
+					$this->check_backup();
+				}
 				$this->{ self::PHASES[ $status ] }();
 			}
 		} catch ( \Throwable $e ) {
@@ -151,7 +157,8 @@ final class Restore {
 				if ( '' === $password || ! Codec::password_matches( $package->signature(), $password ) ) {
 					throw new \RuntimeException( 'password' );
 				}
-				$this->job->set( 'password', $password );
+				// Only the derived key is kept between requests, never the password itself.
+				$this->job->set( 'key', ( new Codec( $password, null ) )->key() );
 			}
 			$db = new Database();
 			do {
@@ -188,22 +195,39 @@ final class Restore {
 	 * Abandons the restore: the temporary tables and the job go away. Files already written stay.
 	 * Waits for a running step to end first.
 	 *
-	 * @throws \RuntimeException Once the site has started switching to the restored database.
+	 * @throws \RuntimeException Once the site runs on the restored database.
 	 */
 	public function cancel() {
 		$this->job->lock( true );
 		try {
 			$this->job->reload();
-			if ( $this->job->get( 'swapping' ) && 'done' !== $this->job->get( 'status' ) ) {
-				throw new \RuntimeException( 'The site is switching to the restored database: this can no longer be cancelled. Retry instead.' );
+			if ( 'done' === $this->job->get( 'status' ) ) {
+				throw new \RuntimeException( 'The restore had already finished: the site runs on the restored database.' );
 			}
-			if ( 'done' !== $this->job->get( 'status' ) && $this->job->get( 'temp_prefix' ) ) {
-				$db = new Database();
-				foreach ( $db->tables( $this->job->get( 'temp_prefix' ) ) as $table ) {
-					$db->query( 'DROP TABLE IF EXISTS `' . $table . '`' );
-				}
+			$db        = new Database();
+			$temporary = $this->job->get( 'temp_prefix' ) ? $db->tables( $this->job->get( 'temp_prefix' ) ) : array();
+			// A switch that the server refused leaves the temporary tables in place: then nothing changed yet.
+			if ( $this->job->get( 'swapped' ) || ( $this->job->get( 'swapping' ) && ! $temporary ) ) {
+				throw new \RuntimeException( 'The site already runs on the restored database: retry to finish the restore instead.' );
+			}
+			foreach ( $temporary as $table ) {
+				$db->query( 'DROP TABLE IF EXISTS `' . $table . '`' );
 			}
 			Guard::remove();
+			$this->job->delete();
+		} finally {
+			$this->job->unlock();
+		}
+	}
+
+	/** Clears a finished restore from the page. */
+	public function dismiss() {
+		$this->job->lock( true );
+		try {
+			$this->job->reload();
+			if ( 'done' !== $this->job->get( 'status' ) ) {
+				throw new \RuntimeException( 'This restore has not finished: cancel it instead.' );
+			}
 			$this->job->delete();
 		} finally {
 			$this->job->unlock();
@@ -543,6 +567,8 @@ final class Restore {
 		fclose( $dump );
 		$this->job->set( 'db', $state );
 		if ( $done ) {
+			// Checked before any file is written: without these tables the site could not run.
+			self::require_core_tables( $state['tables'], $db->prefix() );
 			$this->job->set( 'status', 'extracting_files' );
 			$this->job->log( sprintf( 'Database imported: %1$d tables, %2$d rows, %3$d rows refused by the server, %4$d statements left out.', count( $state['tables'] ), $state['rows'], $state['errors'] + $state['too_large'], $state['refused'] ) );
 		}
@@ -559,11 +585,19 @@ final class Restore {
 	 * @throws \RuntimeException When a table cannot be created, or too many rows fail.
 	 */
 	private function run_statement( Database $db, array $statement, array &$state ) {
-		if ( strlen( $statement['temp_table'] ) > 64 ) {
-			throw new \RuntimeException( sprintf( 'The table name %s is too long for MySQL during the restore.', $statement['table'] ) );
+		if ( max( strlen( $statement['temp_table'] ), strlen( $statement['table'] ) ) > 64 ) {
+			throw new \RuntimeException( sprintf( 'The table name %s is too long for MySQL (64 characters) with this site\'s prefix.', $statement['table'] ) );
 		}
-		$sql   = $statement['sql'];
-		$ok    = $db->query( $sql );
+		$sql = $statement['sql'];
+		$ok  = $db->query( $sql );
+		if ( ! $ok && 'create_table' === $statement['kind'] && 1050 === $db->errno() ) {
+			if ( in_array( strtolower( $statement['table'] ), array_map( 'strtolower', array_keys( $state['tables'] ) ), true ) ) {
+				throw new \RuntimeException( sprintf( 'Two tables of the backup differ only by letter case (%s): this database server cannot hold both.', $statement['table'] ) );
+			}
+			// A table statement replayed after an interrupted step finds its own temporary table: start it over.
+			$db->query( 'DROP TABLE IF EXISTS `' . $statement['temp_table'] . '`' );
+			$ok = $db->query( $sql );
+		}
 		$tried = array();
 		while ( ! $ok && 'create_table' === $statement['kind'] && isset( self::TABLE_FIXES[ $db->errno() ] ) && ! in_array( self::TABLE_FIXES[ $db->errno() ], $tried, true ) ) {
 			$fix     = self::TABLE_FIXES[ $db->errno() ];
@@ -591,7 +625,7 @@ final class Restore {
 		return false;
 	}
 
-	/** Writes the files. Must-use plugins wait for the finalizing step. */
+	/** Writes the files. Must-use plugins are written to the job folder, moved into place at the switch. */
 	private function run_extract_files() {
 		$files   = $this->job->get(
 			'files',
@@ -603,7 +637,7 @@ final class Restore {
 				'count'     => 0,
 				'skipped'   => 0,
 				'failed'    => 0,
-				'later'     => array(),
+				'staged'    => array(),
 			)
 		);
 		$map     = Site::destination_map();
@@ -626,15 +660,22 @@ final class Restore {
 					'stored'      => 0,
 					'written'     => 0,
 				);
-				if ( null === $entry['destination'] || 0 === strpos( (string) Entry_Path::normalize( $header['name'] ), 'mu-plugins/' ) ) {
-					if ( null !== $entry['destination'] ) {
-						$files['later'][] = $entry;
-					} elseif ( ! in_array( $header['name'], self::SPECIAL, true ) ) {
+				if ( null === $entry['destination'] ) {
+					if ( ! in_array( $header['name'], self::SPECIAL, true ) ) {
 						++$files['skipped'];
 					}
 					$files['offset']    = $entry['start'] + $entry['size'];
 					$files['processed'] += $entry['size'];
 					continue;
+				}
+				if ( 0 === strpos( (string) Entry_Path::normalize( $header['name'] ), 'mu-plugins/' ) ) {
+					// In place, the backup's must-use plugins would load in every request of the restore.
+					$staged               = $this->job->path( 'staged-' . count( $files['staged'] ) );
+					$files['staged'][]    = array(
+						'from' => $staged,
+						'to'   => $entry['destination'],
+					);
+					$entry['destination'] = $staged;
 				}
 				$files['entry'] = $entry;
 			}
@@ -688,10 +729,13 @@ final class Restore {
 		} elseif ( is_dir( $destination ) ) {
 			$problem = 'a folder has its name';
 		} else {
-			@touch( $part, $entry['mtime'] ); // phpcs:ignore WordPress.PHP.NoSilencedErrors -- the date is a nicety.
-			if ( ! @rename( $part, $destination ) && ! ( @copy( $part, $destination ) && @touch( $destination, $entry['mtime'] ) ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors -- failure is reported.
+			// touch() and chmod() can be disabled by the host; on PHP 8 calling them would then be fatal.
+			if ( function_exists( 'touch' ) ) {
+				@touch( $part, $entry['mtime'] ); // phpcs:ignore WordPress.PHP.NoSilencedErrors -- the date is a nicety.
+			}
+			if ( ! @rename( $part, $destination ) && ! @copy( $part, $destination ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors -- failure is reported.
 				$problem = 'it is not writable';
-			} else {
+			} elseif ( function_exists( 'chmod' ) ) {
 				@chmod( $destination, defined( 'FS_CHMOD_FILE' ) ? FS_CHMOD_FILE : 0644 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
 			}
 		}
@@ -705,18 +749,18 @@ final class Restore {
 		return true;
 	}
 
-	/** Adjusts the restored options, switches the site to the restored tables, then writes must-use plugins. */
+	/**
+	 * Adjusts the restored options and switches the site to the restored tables, then moves the
+	 * staged must-use plugins into place. All in one request: once switched, the owner's session
+	 * no longer exists, so nothing after the switch may need another request, or fail.
+	 */
 	private function run_finalize() {
 		$result = $this->job->get( 'result', array( 'deactivated' => array() ) );
 		if ( isset( $this->job->get( 'scan' )['entries']['database.sql'] ) && ! $this->job->get( 'swapped' ) ) {
 			$db     = new Database();
 			$prefix = $db->prefix();
 			$tables = $this->job->get( 'db' )['tables'];
-			foreach ( array( 'options', 'users', 'usermeta' ) as $table ) {
-				if ( ! isset( $tables[ $prefix . $table ] ) ) {
-					throw new \RuntimeException( sprintf( 'The backup\'s database has no %s table, so the site was not switched to it.', $prefix . $table ) );
-				}
-			}
+			self::require_core_tables( $tables, $prefix );
 			if ( $this->job->get( 'swapping' ) && ! $db->tables( $tables[ $prefix . 'options' ] ) ) {
 				// A previous attempt switched the tables and stopped before it could say so.
 				$this->job->set( 'swapped', true );
@@ -725,35 +769,52 @@ final class Restore {
 				$this->job->set( 'result', $result );
 				$this->job->set( 'swapping', true );
 				$this->job->save();
-				$this->swap( $db, $tables );
+				try {
+					$this->swap( $db, $tables );
+				} catch ( \RuntimeException $e ) {
+					// The server refuses a RENAME TABLE as a whole: nothing changed, so the restore can still be cancelled.
+					$this->job->set( 'swapping', false );
+					throw $e;
+				}
 				$this->job->set( 'swapped', true );
 				$this->job->save();
-				$this->run_views( $db );
 			}
 		}
 
-		$files   = $this->job->get( 'files' );
-		$archive = $this->open_archive();
-		$codec   = $this->codec();
-		foreach ( $files['later'] as $entry ) {
-			$this->extract_entry( $archive, $entry, $codec, $files, false );
+		$problems = array();
+		try {
+			if ( $this->job->get( 'swapped' ) ) {
+				$this->run_views( new Database() );
+			}
+		} catch ( \Throwable $e ) {
+			$problems[] = 'views: ' . $e->getMessage();
 		}
-		fclose( $archive );
-		$files['later'] = array();
-		$this->job->set( 'files', $files );
+		$files = $this->job->get( 'files' );
+		foreach ( isset( $files['staged'] ) ? $files['staged'] : array() as $staged ) {
+			if ( ! is_file( $staged['from'] ) ) {
+				continue;
+			}
+			$dir = dirname( $staged['to'] );
+			if ( ! ( ( is_dir( $dir ) || wp_mkdir_p( $dir ) ) && ( @rename( $staged['from'], $staged['to'] ) || @copy( $staged['from'], $staged['to'] ) ) ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors -- failure is reported.
+				$problems[] = 'not moved into place: ' . $staged['to'];
+			}
+		}
 
 		wp_cache_flush();
 		if ( function_exists( 'opcache_reset' ) ) {
 			@opcache_reset(); // phpcs:ignore WordPress.PHP.NoSilencedErrors -- hosts may restrict it.
 		}
 		Guard::remove();
-		foreach ( array( 'database.sql', 'views.sql', 'entry.part' ) as $file ) {
-			@unlink( $this->job->path( $file ) ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		foreach ( (array) glob( $this->job->path( '{database.sql,views.sql,entry.part,staged-*}' ), GLOB_BRACE ) as $file ) {
+			@unlink( $file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		}
+		foreach ( $problems as $problem ) {
+			$this->job->log( 'After the switch: ' . $problem );
 		}
 		$db_state = $this->job->get( 'db', array() );
 		$result  += array(
 			'files'        => $files['count'],
-			'failed_files' => $files['failed'],
+			'failed_files' => $files['failed'] + count( $problems ),
 			'rows'         => isset( $db_state['rows'] ) ? $db_state['rows'] : 0,
 			'failed_rows'  => isset( $db_state['errors'] ) ? $db_state['errors'] + $db_state['too_large'] : 0,
 			'refused'      => isset( $db_state['refused'] ) ? $db_state['refused'] : 0,
@@ -761,10 +822,25 @@ final class Restore {
 			'finished'     => time(),
 		);
 		$this->job->set( 'result', $result );
-		$this->job->set( 'password', null );
+		$this->job->set( 'key', null );
 		$this->job->set( 'status', 'done' );
 		$this->job->log( 'Restore finished.' );
 		$this->job->save();
+	}
+
+	/**
+	 * Stops the restore when the dump lacks a table WordPress cannot run without.
+	 *
+	 * @param string[] $tables Final => temporary names of the imported tables.
+	 * @param string   $prefix This site's prefix.
+	 * @throws \RuntimeException When one is missing.
+	 */
+	private static function require_core_tables( array $tables, $prefix ) {
+		foreach ( array( 'options', 'users', 'usermeta' ) as $table ) {
+			if ( ! isset( $tables[ $prefix . $table ] ) ) {
+				throw new \RuntimeException( sprintf( 'The backup\'s database has no %s table, so the restore stopped before changing anything on the site.', $prefix . $table ) );
+			}
+		}
 	}
 
 	/**
@@ -838,14 +914,21 @@ final class Restore {
 	 * @throws \RuntimeException When the server refuses the switch; then nothing changed.
 	 */
 	private function swap( Database $db, array $tables ) {
-		$live       = array_flip( $db->tables() );
+		// Where the server folds table names (Windows, macOS), wp_Foo and wp_foo are the same table.
+		$fold = $db->folds_table_names();
+		$live = array();
+		foreach ( $db->tables() as $name ) {
+			$live[ $fold ? strtolower( $name ) : $name ] = $name;
+		}
 		$old_prefix = 'wpo' . substr( $this->job->get( 'temp_prefix' ), 3 );
 		$renames    = array();
 		$replaced   = array();
 		foreach ( $tables as $final => $temp ) {
-			if ( isset( $live[ $final ] ) ) {
-				$old        = strlen( $old_prefix . $final ) <= 64 ? $old_prefix . $final : $old_prefix . md5( $final );
-				$renames[]  = "`{$final}` TO `{$old}`";
+			$key = $fold ? strtolower( $final ) : $final;
+			if ( isset( $live[ $key ] ) ) {
+				$existing   = $live[ $key ];
+				$old        = strlen( $old_prefix . $existing ) <= 64 ? $old_prefix . $existing : $old_prefix . md5( $existing );
+				$renames[]  = "`{$existing}` TO `{$old}`";
 				$replaced[] = $old;
 			}
 			$renames[] = "`{$temp}` TO `{$final}`";
@@ -932,7 +1015,7 @@ final class Restore {
 
 	/** @return Codec Decoder for this backup. */
 	private function codec() {
-		return new Codec( $this->job->get( 'password' ), $this->package()->compression() );
+		return Codec::from_key( $this->job->get( 'key' ), $this->package()->compression() );
 	}
 
 	/**
@@ -996,7 +1079,7 @@ final class Restore {
 	 * @return int
 	 */
 	private static function statement_limit( $max_allowed_packet ) {
-		$memory = wp_convert_hr_to_bytes( (string) ini_get( 'memory_limit' ) );
+		$memory = function_exists( 'ini_get' ) ? wp_convert_hr_to_bytes( (string) ini_get( 'memory_limit' ) ) : 0;
 		$room   = $memory > 0 ? max( 16 * MB_IN_BYTES, (int) ( ( $memory - memory_get_usage() ) / 5 ) ) : 256 * MB_IN_BYTES;
 		return max( MB_IN_BYTES, min( $max_allowed_packet - 1024, $room ) );
 	}
@@ -1009,7 +1092,7 @@ final class Restore {
 	/** @return float Seconds a step may work: 10, or a third of PHP's time limit if that is shorter. */
 	private static function budget() {
 		$budget = (float) apply_filters( 'wpress_restore_step_seconds', 10 );
-		$limit  = (int) ini_get( 'max_execution_time' );
+		$limit  = function_exists( 'ini_get' ) ? (int) ini_get( 'max_execution_time' ) : 0;
 		return $limit > 0 ? min( $budget, max( 2, $limit / 3 ) ) : $budget;
 	}
 }

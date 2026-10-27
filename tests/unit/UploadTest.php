@@ -57,6 +57,14 @@ final class UploadTest extends TestCase {
 		$this->assertSame( 30, ( new Upload( $this->dir ) )->begin( 'site.wpress', 100, false ) );
 	}
 
+	public function test_a_leftover_that_is_already_complete_becomes_the_backup() {
+		file_put_contents( $this->dir . '/site.wpress.part', str_repeat( 'x', 100 ) );
+
+		$this->assertSame( 100, ( new Upload( $this->dir ) )->begin( 'site.wpress', 100, false ) );
+		$this->assertFileExists( $this->dir . '/site.wpress' );
+		$this->assertFileDoesNotExist( $this->dir . '/site.wpress.part' );
+	}
+
 	public function test_a_leftover_larger_than_the_new_file_starts_over() {
 		file_put_contents( $this->dir . '/site.wpress.part', str_repeat( 'x', 500 ) );
 

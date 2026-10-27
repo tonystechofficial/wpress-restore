@@ -75,6 +75,7 @@ final class Strings {
 			'restoreNow'     => __( 'Restore now', 'wpress-restore' ),
 			'doneTitle'      => __( 'The site is restored.', 'wpress-restore' ),
 			'doneLogin'      => __( 'Log in again with a username and password from the backup.', 'wpress-restore' ),
+			'switchedLoggedOut' => __( 'The site now runs on the restored database, so this session ended. Log in with a username and password from the backup to see the result.', 'wpress-restore' ),
 			'logIn'          => __( 'Log in', 'wpress-restore' ),
 			'doneFiles'      => __( '%s files restored.', 'wpress-restore' ),
 			'doneRows'       => __( '%s database rows imported.', 'wpress-restore' ),

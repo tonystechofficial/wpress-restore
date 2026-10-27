@@ -24,11 +24,11 @@ final class Codec {
 	const CIPHER    = 'AES-256-CBC';
 
 	/**
-	 * Encryption password, null when the archive is not encrypted.
+	 * Key derived from the password, null when the archive is not encrypted.
 	 *
 	 * @var string|null
 	 */
-	private $password;
+	private $key;
 
 	/**
 	 * gzip, bzip2 or null.
@@ -46,8 +46,37 @@ final class Codec {
 		if ( null !== $compression && ! in_array( $compression, array( 'gzip', 'bzip2' ), true ) ) {
 			throw new Archive_Exception( sprintf( 'The backup uses a compression this plugin does not know: %s.', $compression ) );
 		}
-		$this->password    = ( null === $password || '' === $password ) ? null : (string) $password;
+		$this->key         = ( null === $password || '' === $password ) ? null : self::derive( (string) $password );
 		$this->compression = $compression;
+	}
+
+	/**
+	 * A codec from a key returned by key(), so a restore can resume without keeping the password.
+	 *
+	 * @param string|null $key         Hex key, or null for an unencrypted backup.
+	 * @param string|null $compression gzip, bzip2 or null.
+	 * @return Codec
+	 * @throws Archive_Exception When the key is damaged.
+	 */
+	public static function from_key( $key, $compression ) {
+		$codec = new self( null, $compression );
+		if ( null !== $key && '' !== $key ) {
+			$raw = ctype_xdigit( $key ) ? hex2bin( $key ) : false;
+			if ( false === $raw || self::IV_LENGTH !== strlen( $raw ) ) {
+				throw new Archive_Exception( 'The saved decryption key is damaged: cancel and restart the restore.' );
+			}
+			$codec->key = $raw;
+		}
+		return $codec;
+	}
+
+	/**
+	 * The decryption key, as hex: it opens this backup but does not reveal the password, which may be used elsewhere.
+	 *
+	 * @return string|null
+	 */
+	public function key() {
+		return null === $this->key ? null : bin2hex( $this->key );
 	}
 
 	/**
@@ -62,7 +91,7 @@ final class Codec {
 
 	/** @return bool */
 	public function is_plain() {
-		return null === $this->password && null === $this->compression;
+		return null === $this->key && null === $this->compression;
 	}
 
 	/** @return bool */
@@ -72,7 +101,7 @@ final class Codec {
 
 	/** @return bool */
 	public function is_encrypted() {
-		return null !== $this->password;
+		return null !== $this->key;
 	}
 
 	/**
@@ -94,7 +123,7 @@ final class Codec {
 	 * @throws Archive_Exception When the chunk cannot be decrypted or decompressed.
 	 */
 	public function decode( $stored ) {
-		$data = null === $this->password ? $stored : self::decrypt( $stored, $this->password );
+		$data = null === $this->key ? $stored : self::decrypt_with_key( $stored, $this->key );
 		if ( 'gzip' === $this->compression ) {
 			$data = @gzuncompress( $data ); // phpcs:ignore WordPress.PHP.NoSilencedErrors -- failure is checked below.
 			if ( false === $data ) {
@@ -121,16 +150,32 @@ final class Codec {
 	 * @throws Archive_Exception When decryption fails.
 	 */
 	public static function decrypt( $data, $password ) {
+		return self::decrypt_with_key( $data, self::derive( $password ) );
+	}
+
+	/**
+	 * The key ai1wm derives from a password: the first 16 bytes of its SHA-1.
+	 *
+	 * @param string $password Password.
+	 * @return string Raw key.
+	 */
+	private static function derive( $password ) {
+		return substr( sha1( $password, true ), 0, self::IV_LENGTH );
+	}
+
+	/**
+	 * Decrypts IV + ciphertext with a raw key.
+	 *
+	 * @param string $data IV followed by ciphertext.
+	 * @param string $key  Raw key.
+	 * @return string
+	 * @throws Archive_Exception When decryption fails.
+	 */
+	private static function decrypt_with_key( $data, $key ) {
 		if ( strlen( $data ) <= self::IV_LENGTH ) {
 			throw new Archive_Exception( 'An encrypted part of the backup is too short: the file is damaged.' );
 		}
-		$plain = openssl_decrypt(
-			substr( $data, self::IV_LENGTH ),
-			self::CIPHER,
-			substr( sha1( $password, true ), 0, self::IV_LENGTH ),
-			OPENSSL_RAW_DATA,
-			substr( $data, 0, self::IV_LENGTH )
-		);
+		$plain = openssl_decrypt( substr( $data, self::IV_LENGTH ), self::CIPHER, $key, OPENSSL_RAW_DATA, substr( $data, 0, self::IV_LENGTH ) );
 		if ( false === $plain ) {
 			throw new Archive_Exception( 'Part of the backup cannot be decrypted: wrong password or damaged file.' );
 		}

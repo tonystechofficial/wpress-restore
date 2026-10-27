@@ -49,14 +49,16 @@ final class Plugin {
 			return;
 		}
 		echo '<div class="wrap wpress-restore"><h1>WPress Restore</h1>';
-		if ( is_multisite() ) {
-			echo '<div class="notice notice-error"><p>' . esc_html__( 'WPress Restore restores single sites only: it does not run on a WordPress network.', 'wpress-restore' ) . '</p></div></div>';
+		$refusal = self::refusal();
+		if ( null !== $refusal ) {
+			echo '<div class="notice notice-error"><p>' . esc_html( $refusal ) . '</p></div></div>';
 			return;
 		}
 		Site::protect( Site::backups_dir(), false );
 		$job = Job::current();
 		wp_add_inline_script(
 			'wpress-restore',
+			// JSON_HEX_TAG: a backup name or address holding "<!--<script>" must not unbalance the script tag.
 			'window.wpressRestore = ' . wp_json_encode(
 				array(
 					'ajaxUrl'   => admin_url( 'admin-ajax.php' ),
@@ -68,7 +70,8 @@ final class Plugin {
 					'home'      => home_url(),
 					'is32bit'   => PHP_INT_SIZE < 8,
 					'i18n'      => Strings::all(),
-				)
+				),
+				JSON_HEX_TAG | JSON_HEX_AMP
 			) . ';',
 			'before'
 		);
@@ -115,8 +118,12 @@ final class Plugin {
 		if ( ! check_ajax_referer( 'wpress_restore', 'nonce', false ) ) {
 			self::fail( __( 'Your session has expired: reload the page.', 'wpress-restore' ), 'session', 403 );
 		}
-		if ( ! current_user_can( 'manage_options' ) || is_multisite() ) {
+		if ( ! current_user_can( 'manage_options' ) ) {
 			self::fail( __( 'You are not allowed to restore backups.', 'wpress-restore' ), 'forbidden', 403 );
+		}
+		$refusal = self::refusal();
+		if ( null !== $refusal ) {
+			self::fail( $refusal, 'forbidden', 403 );
 		}
 		// phpcs:disable WordPress.Security.NonceVerification.Missing -- checked above.
 		$op   = isset( $_POST['op'] ) ? sanitize_key( wp_unslash( $_POST['op'] ) ) : '';
@@ -128,7 +135,10 @@ final class Plugin {
 		};
 		// phpcs:enable
 
-		@set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors -- steps keep themselves short; this only lifts a stricter host limit.
+		// Hosts may disable set_time_limit(); on PHP 8 calling it would then be fatal.
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors -- steps keep themselves short; this only lifts a stricter host limit.
+		}
 		wp_raise_memory_limit( 'admin' );
 		try {
 			switch ( $op ) {
@@ -150,22 +160,38 @@ final class Plugin {
 						}
 						throw $e;
 					}
-					self::send(
-						array(
-							'name'   => $name,
-							'offset' => $offset,
-						)
+					$begun = array(
+						'name'   => $name,
+						'offset' => $offset,
+						'done'   => $offset === $int( 'size' ),
 					);
+					if ( $begun['done'] ) {
+						$begun['backups'] = Backups::all();
+					}
+					self::send( $begun );
 					break;
 
 				case 'upload_chunk':
+					$name = $text( 'name' );
+					if ( Upload::safe_name( $name ) !== $name ) {
+						self::fail( __( 'Only .wpress files can be restored.', 'wpress-restore' ), 'name', 400 );
+					}
 					// phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput -- checked above; only the temporary path is used.
 					$chunk = isset( $_FILES['chunk'] ) ? $_FILES['chunk'] : null;
 					if ( ! $chunk || UPLOAD_ERR_OK !== $chunk['error'] || ! is_uploaded_file( $chunk['tmp_name'] ) ) {
 						$too_big = $chunk && in_array( $chunk['error'], array( UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE ), true );
 						self::fail( __( 'The server refused a piece of the upload.', 'wpress-restore' ), $too_big ? 'chunk_size' : 'chunk', $too_big ? 413 : 400 );
 					}
-					$result = ( new Upload( Site::backups_dir() ) )->append( $text( 'name' ), $int( 'size' ), $int( 'offset' ), $chunk['tmp_name'] );
+					// Moved first: open_basedir may forbid reading PHP's upload folder, never move_uploaded_file().
+					$piece = Site::backups_dir() . '/' . $name . '.chunk';
+					if ( ! move_uploaded_file( $chunk['tmp_name'], $piece ) ) {
+						self::fail( __( 'The backups folder is not writable.', 'wpress-restore' ), 'chunk', 500 );
+					}
+					try {
+						$result = ( new Upload( Site::backups_dir() ) )->append( $name, $int( 'size' ), $int( 'offset' ), $piece );
+					} finally {
+						@unlink( $piece ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+					}
 					if ( $result['done'] ) {
 						$result['backups'] = Backups::all();
 					}
@@ -220,6 +246,14 @@ final class Plugin {
 					self::send( array( 'backups' => Backups::all() ) );
 					break;
 
+				case 'dismiss':
+					$job = Job::current();
+					if ( $job ) {
+						( new Restore( $job ) )->dismiss();
+					}
+					self::send( array( 'backups' => Backups::all() ) );
+					break;
+
 				case 'log':
 					self::send( array( 'log' => ( new Restore( self::job() ) )->log_text() ) );
 					break;
@@ -232,6 +266,25 @@ final class Plugin {
 		} catch ( \Throwable $e ) {
 			self::fail( $e->getMessage(), 'error', 500 );
 		}
+	}
+
+	/**
+	 * Why restoring is not possible here, or null.
+	 *
+	 * @return string|null
+	 */
+	private static function refusal() {
+		if ( is_multisite() ) {
+			return __( 'WPress Restore restores single sites only: it does not run on a WordPress network.', 'wpress-restore' );
+		}
+		// A restore installs plugins and themes: a site that forbids that (DISALLOW_FILE_MODS) forbids restores.
+		if ( ! current_user_can( 'install_plugins' ) ) {
+			return __( 'A restore writes plugins and themes, which this site does not let you do: file changes are disabled (DISALLOW_FILE_MODS) or your account cannot install plugins.', 'wpress-restore' );
+		}
+		if ( ! Database::is_supported() ) {
+			return __( 'This site reaches its database through a drop-in such as HyperDB, LudicrousDB or SQLite: WPress Restore needs WordPress\'s standard MySQL connection.', 'wpress-restore' );
+		}
+		return null;
 	}
 
 	/**

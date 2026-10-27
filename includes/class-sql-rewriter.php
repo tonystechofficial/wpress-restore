@@ -153,6 +153,9 @@ final class Sql_Rewriter {
 		if ( 'drop_view' === $kind || 'create_view' === $kind ) {
 			return self::result( 'defer', $kind, $this->with_final_prefix( $sql ), $final );
 		}
+		if ( 'create_table' === $kind && self::reaches_beyond( $sql ) ) {
+			return self::result( 'refuse', $kind, null, $final, $temp, 'the table would be filled from, or stored in, other tables or servers' );
+		}
 		if ( 'insert' === $kind && ( ( $final === $this->final . 'options' && preg_match( self::CACHE_ROWS, $sql ) ) || $final === $this->final . 'eum_logs' ) ) {
 			return self::result( 'skip', $kind, null, $final, $temp, 'cache row' );
 		}
@@ -267,6 +270,19 @@ final class Sql_Rewriter {
 			},
 			$code
 		);
+	}
+
+	/**
+	 * Whether a CREATE TABLE copies another table (… SELECT) or keeps its rows elsewhere
+	 * (MERGE over other tables, FEDERATED, CONNECT or SPIDER on other servers).
+	 *
+	 * @param string $sql CREATE TABLE statement.
+	 * @return bool
+	 */
+	private static function reaches_beyond( $sql ) {
+		$bounds  = self::definition_bounds( $sql );
+		$options = Sql_String::without_quoted( null === $bounds ? $sql : substr( $sql, $bounds[1] + 1 ) );
+		return (bool) preg_match( '/\bSELECT\b|\bUNION\s*=|\bCONNECTION\s*=|\b(?:ENGINE|TYPE)\s*=\s*(?:MRG_MYISAM|MERGE|FEDERATED|FEDERATEDX|CONNECT|SPIDER)\b/i', $options );
 	}
 
 	/**

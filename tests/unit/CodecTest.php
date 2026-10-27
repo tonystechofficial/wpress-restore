@@ -19,6 +19,19 @@ final class CodecTest extends TestCase {
 		( new Codec( 'wrong', null ) )->decode( Ai1wm::encrypt( 'hello world', 'secret', str_repeat( 'i', 16 ) ) );
 	}
 
+	public function test_a_codec_rebuilt_from_its_stored_key_decrypts_without_the_password() {
+		$stored = ( new Codec( 'secret', 'gzip' ) )->key();
+
+		$this->assertNotContains( 'secret', array( $stored ) );
+		$this->assertSame( 32, strlen( $stored ) );
+		$this->assertSame( 'kept', Codec::from_key( $stored, 'gzip' )->decode( Ai1wm::encrypt( gzcompress( 'kept' ), 'secret' ) ) );
+	}
+
+	public function test_without_a_password_there_is_no_key() {
+		$this->assertNull( ( new Codec( null, null ) )->key() );
+		$this->assertTrue( Codec::from_key( null, null )->is_plain() );
+	}
+
 	public function test_checks_a_password_against_the_package_signature() {
 		$signature = base64_encode( Ai1wm::encrypt( Ai1wm::SIGN_TEXT, 'secret' ) );
 

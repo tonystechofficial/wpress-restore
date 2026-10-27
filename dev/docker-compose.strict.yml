@@ -1,0 +1,8 @@
+# Site B on a locked-down host:
+#   COMPOSE_PATH_SEPARATOR=: COMPOSE_FILE=docker-compose.yml:docker-compose.strict.yml dev/reset-site-b.sh
+services:
+  site-b:
+    volumes:
+      - html-b:/var/www/html
+      - ./php-hosting.ini:/usr/local/etc/php/conf.d/zz-hosting.ini:ro
+      - ./php-strict.ini:/usr/local/etc/php/conf.d/zz-strict.ini:ro

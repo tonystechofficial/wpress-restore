@@ -9,7 +9,7 @@ Put the backup in `wp-content/ai1wm-backups/` by FTP or SFTP (or send it with th
 1. Build the zip: `python bin/build.py` → `dist/wpress-restore.zip`. Or take the zip handed to you.
 2. In WordPress: **Plugins → Add New → Upload Plugin**, choose the zip, activate.
 
-Requirements: WordPress 5.6+, PHP 7.4+ (64-bit for backups of 2 GB or more), a single site (not a network).
+Requirements: WordPress 5.6+, PHP 7.4+ (64-bit for backups of 2 GB or more), a single site (not a network), plugin installs allowed (no `DISALLOW_FILE_MODS`, since a restore writes plugins and themes), and WordPress's standard database connection (not a HyperDB, LudicrousDB or SQLite drop-in).
 
 ## Restore a backup
 
@@ -28,7 +28,7 @@ Requirements: WordPress 5.6+, PHP 7.4+ (64-bit for backups of 2 GB or more), a s
 | Restoring files | Writes plugins, themes, uploads and other wp-content files, each moved into place in one rename | Files only |
 | Switching | Adjusts the restored options, then one `RENAME TABLE` swaps every table at once; must-use plugins are written last | Yes |
 
-A backup whose database cannot be imported stops before the switch, so the site keeps running on its own database. Every phase saves where it stopped: **Retry** resumes after an error, and closing the tab only pauses the restore.
+A backup whose database cannot be imported, or lacks the tables WordPress needs, stops before any file is written, so the site keeps running as it was. Every phase saves where it stopped: **Retry** resumes after an error, and closing the tab only pauses the restore. The switch and the moves that follow it happen in a single request, because the switch ends your session.
 
 During a restore, a must-use plugin (`wpress-restore-guard.php`) keeps other plugins and the theme from loading in the restore's own requests. Their files are being replaced, and half-written code must not break the requests that finish writing it. The guard removes itself at the end.
 
@@ -44,7 +44,8 @@ It differs where that makes restores safer:
 
 - **The database is switched in one step** instead of table by table into the live site.
 - **Collations come from the server's own list.** On MariaDB 10.6, All-in-One WP Migration 7.112 reports success but drops the tables a MySQL 8 site created with `utf8mb4_0900_ai_ci` (measured: 12 tables restored out of 15). This plugin maps them to `utf8mb4_unicode_520_ci` and restores all 15. The same goes for MariaDB's `uca1400` collations on MySQL.
-- **Only the backup's own tables are touched.** A statement on any other table is refused and logged.
+- **Statements run only against the backup's own table names.** Anything else is refused and logged, including tables built to copy or reach other tables or servers (`CREATE … SELECT`, MERGE, FEDERATED). A backup still carries PHP code, so restore only backups you trust.
+- **Table names are compared the way the server does.** On servers that fold names to lowercase (Windows and macOS, `lower_case_table_names`), `wp_Foo` and `wp_foo` are the same table.
 - **Table creation errors stop the restore** (before the switch) instead of being ignored. Rows the server refuses are counted, logged, and shown.
 
 ## Supported backups
@@ -61,11 +62,13 @@ Tested end to end with real All-in-One WP Migration 7.112 exports: MySQL 8 → M
 - WordPress networks (multisite).
 - Addresses hidden in base64 by a few page builders (WPBakery raw HTML blocks, Oxygen, Avada, BeTheme, OptimizePress) are not moved when the domain changes; All-in-One WP Migration handles those. Restoring onto the same address is unaffected.
 - Rows are imported one statement at a time, as the dump writes them: a database of millions of rows takes minutes.
+- If the host kills a request mid-step (memory or process limits), the next step replays what that request had not yet saved. InnoDB tables roll back, so nothing is doubled. Tables kept as MyISAM cannot roll back: a few rows may then be reported as refused, or doubled in tables without a key.
 - A backup from WordPress 6.8 or later restored onto an older WordPress: the backup's passwords use the bcrypt format older versions cannot check, so nobody can log in until WordPress is updated. The summary says so in red before you confirm. Update WordPress first.
 
 ## Security notes
 
-- Only administrators (`manage_options`) can use the page, and every request carries a WordPress nonce.
+- Only administrators who may install plugins (`manage_options` and `install_plugins`) can use the page, and every request carries a WordPress nonce.
+- The password of an encrypted backup is never stored. The job keeps only the key derived from it, which opens that backup but not the password, and erases the key when the restore ends.
 - The working folder `wp-content/wpress-restore/job-<random>/` holds the unpacked dump while a restore runs. Its name cannot be guessed, and it denies web access on Apache (`.htaccess`) and IIS (`web.config`). On nginx, add:
   `location ~ ^/wp-content/wpress-restore/ { deny all; }`
 - Like All-in-One WP Migration, the backups folder only blocks directory listing: a backup can be downloaded by anyone who knows its file name. Delete backups once restored, or deny `wp-content/ai1wm-backups/*.wpress` in the server configuration.

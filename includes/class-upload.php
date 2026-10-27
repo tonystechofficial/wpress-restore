@@ -67,7 +67,12 @@ final class Upload {
 		$part = $final . '.part';
 		clearstatcache( true, $part );
 		if ( is_file( $part ) && filesize( $part ) <= $size ) {
-			return (int) filesize( $part );
+			$have = (int) filesize( $part );
+			// Complete but never renamed: the request that wrote the last chunk stopped short.
+			if ( $have === $size ) {
+				self::finish( $part, $final );
+			}
+			return $have;
 		}
 		if ( false === file_put_contents( $part, '' ) ) {
 			throw new \RuntimeException( 'The backups folder is not writable.' );
@@ -114,22 +119,29 @@ final class Upload {
 		}
 
 		$offset += $length;
-		if ( $offset < $size ) {
-			return array(
-				'offset' => $offset,
-				'done'   => false,
-			);
+		if ( $offset === $size ) {
+			self::finish( $part, $final );
 		}
+		return array(
+			'offset' => $offset,
+			'done'   => $offset === $size,
+		);
+	}
+
+	/**
+	 * Gives a complete upload its name.
+	 *
+	 * @param string $part  Unfinished file.
+	 * @param string $final Backup name.
+	 * @throws \RuntimeException When the rename fails.
+	 */
+	private static function finish( $part, $final ) {
 		if ( file_exists( $final ) ) {
 			unlink( $final );
 		}
 		if ( ! rename( $part, $final ) ) {
 			throw new \RuntimeException( 'The uploaded file could not be renamed.' );
 		}
-		return array(
-			'offset' => $offset,
-			'done'   => true,
-		);
 	}
 
 	/**

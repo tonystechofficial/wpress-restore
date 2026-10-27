@@ -171,6 +171,22 @@ final class Database {
 		return $engines ? $engines : array( 'innodb', 'myisam' );
 	}
 
+	/** @return bool Whether the server compares table names without case (lower_case_table_names 1 or 2). */
+	public function folds_table_names() {
+		return (int) $this->value( 'SELECT @@lower_case_table_names' ) > 0;
+	}
+
+	/**
+	 * Whether this site talks to its database the way the restore needs: core wpdb over mysqli.
+	 * Drop-ins (HyperDB, LudicrousDB, SQLite) route queries their own way, possibly to replicas.
+	 *
+	 * @return bool
+	 */
+	public static function is_supported() {
+		global $wpdb;
+		return $wpdb instanceof \wpdb && 'wpdb' === get_class( $wpdb ) && $wpdb->dbh instanceof \mysqli;
+	}
+
 	/** @return int Largest statement the server accepts. */
 	public function max_allowed_packet() {
 		$value = (int) $this->value( 'SELECT @@SESSION.max_allowed_packet' );

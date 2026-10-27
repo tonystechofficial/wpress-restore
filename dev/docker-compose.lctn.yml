@@ -1,0 +1,6 @@
+# Site B's database folds table names to lowercase, as on Windows and macOS hosts:
+#   COMPOSE_PATH_SEPARATOR=: COMPOSE_FILE=docker-compose.yml:docker-compose.lctn.yml dev/reset-site-b.sh
+services:
+  db-b:
+    image: mysql:8.0
+    command: ["--lower-case-table-names=1"]
