@@ -77,16 +77,7 @@ final class Restore {
 	 * @throws \RuntimeException When another restore is under way or the file cannot be read.
 	 */
 	public static function start( $backup ) {
-		$current = Job::current();
-		if ( $current ) {
-			if ( 'done' === $current->get( 'status' ) ) {
-				( new self( $current ) )->dismiss();
-			} elseif ( in_array( $current->get( 'status' ), array( 'ready', 'failed' ), true ) ) {
-				( new self( $current ) )->cancel();
-			} else {
-				throw new \RuntimeException( 'A restore is already under way: let it finish or cancel it first.' );
-			}
-		}
+		Runner::clear_previous();
 		$path = Site::backups_dir() . '/' . $backup;
 		clearstatcache( true, $path );
 		$size = filesize( $path );
@@ -121,7 +112,7 @@ final class Restore {
 		try {
 			if ( isset( self::PHASES[ $status ] ) ) {
 				$this->started = microtime( true );
-				$this->budget  = self::budget();
+				$this->budget  = Runner::budget();
 				// Once switched, the restore no longer reads the backup: moving it must not block the end.
 				if ( ! $this->job->get( 'swapped' ) ) {
 					$this->check_backup();
@@ -242,6 +233,7 @@ final class Restore {
 	public function view() {
 		$state = $this->job->state();
 		return array(
+			'type'          => 'restore',
 			'status'        => $state['status'],
 			'backup'        => $state['backup'],
 			'error'         => isset( $state['error'] ) ? $state['error'] : null,
@@ -406,7 +398,7 @@ final class Restore {
 				'same_site'      => untrailingslashit( $old['home_url'] ) === untrailingslashit( home_url() ),
 				'wordpress'      => $package->wordpress_version(),
 				'php'            => $package->php_version(),
-				'made_with'      => $package->plugin_version(),
+				'made_with'      => $package->made_with(),
 				'files'          => $scan['files'] - count( $scan['entries'] ),
 				'bytes'          => $scan['bytes'],
 				'database'       => null !== $database,
@@ -419,7 +411,7 @@ final class Restore {
 			)
 		);
 		$this->job->set( 'status', $scan['eof']['crc32'] && PHP_INT_SIZE >= 8 ? 'verifying' : 'ready' );
-		$this->job->log( sprintf( 'Backup of %1$s made by All-in-One WP Migration %2$s: %3$d files, %4$s.', $old['home_url'], $package->plugin_version(), $scan['files'], size_format( $scan['bytes'], 1 ) ) );
+		$this->job->log( sprintf( 'Backup of %1$s made by %2$s: %3$d files, %4$s.', $old['home_url'], $package->made_with(), $scan['files'], size_format( $scan['bytes'], 1 ) ) );
 	}
 
 	/** Checks the archive's CRC32 before anything is changed: a damaged upload fails here. */
@@ -477,7 +469,7 @@ final class Restore {
 		$archive = $this->open_archive();
 		$stream  = new Entry_Stream( $archive, $entry['start'], $entry['size'], $state['stored'], $this->codec()->for_entry( 'database.sql' ) );
 		while ( ! $this->out_of_time() && null !== ( $piece = $stream->read() ) ) {
-			self::write( $out, $piece );
+			Runner::write( $out, $piece );
 			$state['written'] += strlen( $piece );
 			$state['stored']   = $stream->stored_offset();
 		}
@@ -712,7 +704,7 @@ final class Restore {
 		}
 		$stream = new Entry_Stream( $archive, $entry['start'], $entry['size'], $entry['stored'], $codec->for_entry( $entry['name'] ) );
 		while ( null !== ( $piece = $stream->read() ) ) {
-			self::write( $out, $piece );
+			Runner::write( $out, $piece );
 			$entry['written'] += strlen( $piece );
 			$entry['stored']   = $stream->stored_offset();
 			if ( $timed && $entry['stored'] < $entry['size'] && $this->out_of_time() ) {
@@ -1059,19 +1051,6 @@ final class Restore {
 	}
 
 	/**
-	 * Writes all of $data.
-	 *
-	 * @param resource $handle File.
-	 * @param string   $data   Bytes.
-	 * @throws \RuntimeException When the disk takes less.
-	 */
-	private static function write( $handle, $data ) {
-		if ( '' !== $data && fwrite( $handle, $data ) !== strlen( $data ) ) {
-			throw new \RuntimeException( 'Writing failed: the disk is probably full. Free some space, then retry.' );
-		}
-	}
-
-	/**
 	 * Largest statement to run: what the server accepts, within what PHP memory allows, since a
 	 * statement is copied a few times while its addresses are rewritten.
 	 *
@@ -1087,12 +1066,5 @@ final class Restore {
 	/** @return bool Whether this step has used its time. */
 	private function out_of_time() {
 		return microtime( true ) - $this->started > $this->budget;
-	}
-
-	/** @return float Seconds a step may work: 10, or a third of PHP's time limit if that is shorter. */
-	private static function budget() {
-		$budget = (float) apply_filters( 'wpress_restore_step_seconds', 10 );
-		$limit  = function_exists( 'ini_get' ) ? (int) ini_get( 'max_execution_time' ) : 0;
-		return $limit > 0 ? min( $budget, max( 2, $limit / 3 ) ) : $budget;
 	}
 }

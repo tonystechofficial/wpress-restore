@@ -171,6 +171,119 @@ final class Database {
 		return $engines ? $engines : array( 'innodb', 'myisam' );
 	}
 
+	/**
+	 * The tables and views a backup holds, as ai1wm picks them: those with the site prefix, plus
+	 * the tables of plugins that ignore it (Dump_Format::OUTSIDE_PREFIX).
+	 *
+	 * @param string $prefix Site prefix.
+	 * @return array tables (base tables then views), views.
+	 */
+	public function export_tables( $prefix ) {
+		$fold   = $this->folds_table_names();
+		$starts = array_merge( array( $prefix ), Dump_Format::OUTSIDE_PREFIX );
+		$picked = array(
+			'BASE TABLE' => array(),
+			'VIEW'       => array(),
+		);
+		foreach ( $this->fetch_rows( 'SHOW FULL TABLES' ) as $row ) {
+			if ( ! isset( $row[1], $picked[ $row[1] ] ) ) {
+				continue;
+			}
+			foreach ( $starts as $start ) {
+				if ( '' === $start || 0 === strpos( $fold ? strtolower( $row[0] ) : $row[0], $fold ? strtolower( $start ) : $start ) ) {
+					$picked[ $row[1] ][] = $row[0];
+					break;
+				}
+			}
+		}
+		return array(
+			'tables' => array_merge( $picked['BASE TABLE'], $picked['VIEW'] ),
+			'views'  => $picked['VIEW'],
+		);
+	}
+
+	/**
+	 * SHOW CREATE TABLE or SHOW CREATE VIEW.
+	 *
+	 * @param string $name Table or view.
+	 * @param bool   $view Whether it is a view.
+	 * @return string
+	 * @throws \RuntimeException When the server does not answer.
+	 */
+	public function create_statement( $name, $view ) {
+		$rows = $this->fetch_rows( ( $view ? 'SHOW CREATE VIEW `' : 'SHOW CREATE TABLE `' ) . str_replace( '`', '``', $name ) . '`' );
+		if ( ! isset( $rows[0][1] ) ) {
+			throw new \RuntimeException( sprintf( 'The database server does not describe %s: %s', $name, $this->error ) );
+		}
+		return $rows[0][1];
+	}
+
+	/**
+	 * Column types in column order, generated columns typed Dump_Format::GENERATED.
+	 *
+	 * @param string $table Table.
+	 * @return string[] Column name => type.
+	 */
+	public function columns( $table ) {
+		$columns = array();
+		foreach ( $this->fetch_rows( 'SHOW COLUMNS FROM `' . str_replace( '`', '``', $table ) . '`' ) as $row ) {
+			$columns[ $row[0] ] = Dump_Format::column_type( $row[1], isset( $row[5] ) ? $row[5] : '' );
+		}
+		return $columns;
+	}
+
+	/**
+	 * Primary key columns, in key order.
+	 *
+	 * @param string $table Table.
+	 * @return string[]
+	 */
+	public function primary_key( $table ) {
+		$key = array();
+		foreach ( $this->fetch_rows( 'SHOW KEYS FROM `' . str_replace( '`', '``', $table ) . "` WHERE Key_name = 'PRIMARY'" ) as $row ) {
+			$key[ (int) $row[3] ] = $row[4];
+		}
+		ksort( $key );
+		return array_values( $key );
+	}
+
+	/**
+	 * Rows as lists of raw values, NULL kept, bytes untouched.
+	 *
+	 * @param string $sql Query.
+	 * @return array[]
+	 * @throws \RuntimeException When the query fails.
+	 */
+	public function fetch_rows( $sql ) {
+		$this->error = '';
+		if ( null === $this->mysqli ) {
+			$suppress = $this->wpdb->suppress_errors( true );
+			$rows     = $this->wpdb->get_results( $sql, ARRAY_N );
+			$this->wpdb->suppress_errors( $suppress );
+			$this->error = $this->wpdb->last_error;
+			if ( '' !== $this->error ) {
+				throw new \RuntimeException( $this->error );
+			}
+			return is_array( $rows ) ? $rows : array();
+		}
+		try {
+			$result = mysqli_query( $this->mysqli, $sql );
+		} catch ( \mysqli_sql_exception $e ) {
+			$result      = false;
+			$this->error = $e->getMessage();
+		}
+		if ( ! $result instanceof \mysqli_result ) {
+			$this->error = $this->error ?: mysqli_error( $this->mysqli );
+			throw new \RuntimeException( $this->error );
+		}
+		$rows = array();
+		while ( null !== ( $row = mysqli_fetch_row( $result ) ) ) {
+			$rows[] = $row;
+		}
+		mysqli_free_result( $result );
+		return $rows;
+	}
+
 	/** @return bool Whether the server compares table names without case (lower_case_table_names 1 or 2). */
 	public function folds_table_names() {
 		return (int) $this->value( 'SELECT @@lower_case_table_names' ) > 0;

@@ -16,6 +16,23 @@
 	border-left: 4px solid #2271b1;
 }
 
+.wpress-restore .wpr-options {
+	display: grid;
+	gap: 6px;
+	margin: 8px 0 12px;
+}
+
+.wpress-restore .wpr-password-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px 24px;
+	margin-bottom: 4px;
+}
+
+.wpress-restore .wpr-password-row .regular-text {
+	max-width: 100%;
+}
+
 .wpress-restore .wpr-upload-row {
 	display: flex;
 	flex-wrap: wrap;

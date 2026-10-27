@@ -33,17 +33,17 @@ final class Plugin {
 	}
 
 	/**
-	 * Adds a "Restore a backup" link on the Plugins screen.
+	 * Adds a "Backups" link on the Plugins screen.
 	 *
 	 * @param string[] $links Links.
 	 * @return string[]
 	 */
 	public static function action_links( $links ) {
-		array_unshift( $links, '<a href="' . esc_url( admin_url( 'tools.php?page=' . self::PAGE ) ) . '">' . esc_html__( 'Restore a backup', 'wpress-restore' ) . '</a>' );
+		array_unshift( $links, '<a href="' . esc_url( admin_url( 'tools.php?page=' . self::PAGE ) ) . '">' . esc_html__( 'Backups', 'wpress-restore' ) . '</a>' );
 		return $links;
 	}
 
-	/** Renders the page; the browser script draws the backups and the restore. */
+	/** Renders the page; the browser script draws the backups and the job in progress. */
 	public static function render() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
@@ -65,7 +65,7 @@ final class Plugin {
 					'nonce'     => wp_create_nonce( 'wpress_restore' ),
 					'chunkSize' => (int) min( 8 * MB_IN_BYTES, max( 256 * KB_IN_BYTES, wp_max_upload_size() * 0.9 ) ),
 					'backups'   => Backups::all(),
-					'job'       => $job ? ( new Restore( $job ) )->view() : null,
+					'job'       => $job ? Runner::of( $job )->view() : null,
 					'loginUrl'  => wp_login_url( admin_url( 'tools.php?page=' . self::PAGE ) ),
 					'home'      => home_url(),
 					'is32bit'   => PHP_INT_SIZE < 8,
@@ -77,14 +77,46 @@ final class Plugin {
 		);
 		$folder = Site::backups_dir();
 		?>
-		<p class="wpr-intro"><?php esc_html_e( 'Restores backups made with All-in-One WP Migration (.wpress files), whatever their size: the work is done a few seconds at a time, so no upload or time limit applies.', 'wpress-restore' ); ?></p>
+		<p class="wpr-intro"><?php esc_html_e( 'Creates and restores All-in-One WP Migration backups (.wpress files), whatever their size: the work is done a few seconds at a time, so no upload or time limit applies.', 'wpress-restore' ); ?></p>
 		<?php if ( PHP_INT_SIZE < 8 ) : ?>
-			<div class="notice notice-warning inline"><p><?php esc_html_e( 'This server runs 32-bit PHP: backups of 2 GB or more cannot be read. Ask your host for 64-bit PHP.', 'wpress-restore' ); ?></p></div>
+			<div class="notice notice-warning inline"><p><?php esc_html_e( 'This server runs 32-bit PHP: backups of 2 GB or more cannot be read or written. Ask your host for 64-bit PHP.', 'wpress-restore' ); ?></p></div>
 		<?php endif; ?>
 		<?php if ( ! wp_is_writable( WP_CONTENT_DIR ) ) : ?>
-			<div class="notice notice-error inline"><p><?php esc_html_e( 'The wp-content folder is not writable by the web server: a restore needs to write there.', 'wpress-restore' ); ?></p></div>
+			<div class="notice notice-error inline"><p><?php esc_html_e( 'The wp-content folder is not writable by the web server: backups and restores need to write there.', 'wpress-restore' ); ?></p></div>
 		<?php endif; ?>
 		<div id="wpr-job" class="wpr-panel" hidden></div>
+		<div class="wpr-panel wpr-create">
+			<h2><?php esc_html_e( 'Create a backup', 'wpress-restore' ); ?></h2>
+			<p><?php esc_html_e( 'Saves the database, media, plugins and themes into a .wpress file in the backups folder. WPress Restore and All-in-One WP Migration can both restore it.', 'wpress-restore' ); ?></p>
+			<fieldset class="wpr-options">
+				<label><input type="checkbox" id="wpr-no-media"> <?php esc_html_e( 'Leave out the media library (uploads)', 'wpress-restore' ); ?></label>
+				<label><input type="checkbox" id="wpr-no-revisions"> <?php esc_html_e( 'Leave out post revisions', 'wpress-restore' ); ?></label>
+				<label><input type="checkbox" id="wpr-no-spam"> <?php esc_html_e( 'Leave out spam comments', 'wpress-restore' ); ?></label>
+				<label><input type="checkbox" id="wpr-no-cache"> <?php esc_html_e( 'Leave out the cache folder (wp-content/cache)', 'wpress-restore' ); ?></label>
+			</fieldset>
+			<p>
+				<label for="wpr-compression"><?php esc_html_e( 'Compression', 'wpress-restore' ); ?></label><br>
+				<select id="wpr-compression">
+					<option value=""><?php esc_html_e( 'None: fastest', 'wpress-restore' ); ?></option>
+					<option value="gzip"<?php disabled( ! function_exists( 'gzcompress' ) ); ?>><?php esc_html_e( 'gzip: smaller', 'wpress-restore' ); ?></option>
+					<option value="bzip2"<?php disabled( ! function_exists( 'bzcompress' ) ); ?>><?php esc_html_e( 'bzip2: smallest, slowest', 'wpress-restore' ); ?></option>
+				</select>
+			</p>
+			<?php if ( function_exists( 'openssl_encrypt' ) ) : ?>
+				<p class="wpr-password-row">
+					<span>
+						<label for="wpr-export-password"><?php esc_html_e( 'Password (optional)', 'wpress-restore' ); ?></label><br>
+						<input type="password" id="wpr-export-password" class="regular-text" autocomplete="new-password">
+					</span>
+					<span>
+						<label for="wpr-export-password2"><?php esc_html_e( 'Repeat the password', 'wpress-restore' ); ?></label><br>
+						<input type="password" id="wpr-export-password2" class="regular-text" autocomplete="new-password">
+					</span>
+				</p>
+				<p class="description"><?php esc_html_e( 'With a password, the backup is encrypted. Keep the password safe: without it, nobody can restore the backup.', 'wpress-restore' ); ?></p>
+			<?php endif; ?>
+			<p><button type="button" class="button button-primary" id="wpr-create"><?php esc_html_e( 'Create backup', 'wpress-restore' ); ?></button></p>
+		</div>
 		<div class="wpr-panel wpr-upload">
 			<h2><?php esc_html_e( 'Add a backup', 'wpress-restore' ); ?></h2>
 			<p>
@@ -119,7 +151,7 @@ final class Plugin {
 			self::fail( __( 'Your session has expired: reload the page.', 'wpress-restore' ), 'session', 403 );
 		}
 		if ( ! current_user_can( 'manage_options' ) ) {
-			self::fail( __( 'You are not allowed to restore backups.', 'wpress-restore' ), 'forbidden', 403 );
+			self::fail( __( 'You are not allowed to manage backups.', 'wpress-restore' ), 'forbidden', 403 );
 		}
 		$refusal = self::refusal();
 		if ( null !== $refusal ) {
@@ -208,19 +240,38 @@ final class Plugin {
 					self::send( array( 'job' => ( new Restore( $job ) )->view() ) );
 					break;
 
-				case 'step':
-					$restore = new Restore( self::job() );
-					$ran     = $restore->step();
-					self::send(
+				case 'export_start':
+					$job = Export::start(
 						array(
-							'job'  => $restore->view(),
-							'busy' => ! $ran,
+							'no_media'          => '1' === $text( 'no_media' ),
+							'no_spam_comments'  => '1' === $text( 'no_spam_comments' ),
+							'no_post_revisions' => '1' === $text( 'no_post_revisions' ),
+							'no_cache'          => '1' === $text( 'no_cache' ),
+							'compression'       => $text( 'compression' ),
+							'password'          => $text( 'password' ),
 						)
 					);
+					self::send( array( 'job' => ( new Export( $job ) )->view() ) );
+					break;
+
+				case 'step':
+					$runner = Runner::of( self::job() );
+					$ran    = $runner->step();
+					$step   = array(
+						'job'  => $runner->view(),
+						'busy' => ! $ran,
+					);
+					if ( 'done' === $step['job']['status'] ) {
+						$step['backups'] = Backups::all();
+					}
+					self::send( $step );
 					break;
 
 				case 'confirm':
-					$restore = new Restore( self::job() );
+					$restore = Runner::of( self::job() );
+					if ( ! $restore instanceof Restore ) {
+						self::fail( __( 'There is no restore waiting for confirmation.', 'wpress-restore' ), 'no_job', 404 );
+					}
 					try {
 						$restore->confirm( $text( 'password' ) );
 					} catch ( \RuntimeException $e ) {
@@ -233,15 +284,15 @@ final class Plugin {
 					break;
 
 				case 'retry':
-					$restore = new Restore( self::job() );
-					$restore->retry();
-					self::send( array( 'job' => $restore->view() ) );
+					$runner = Runner::of( self::job() );
+					$runner->retry();
+					self::send( array( 'job' => $runner->view() ) );
 					break;
 
 				case 'cancel':
 					$job = Job::current();
 					if ( $job ) {
-						( new Restore( $job ) )->cancel();
+						Runner::of( $job )->cancel();
 					}
 					self::send( array( 'backups' => Backups::all() ) );
 					break;
@@ -249,13 +300,13 @@ final class Plugin {
 				case 'dismiss':
 					$job = Job::current();
 					if ( $job ) {
-						( new Restore( $job ) )->dismiss();
+						Runner::of( $job )->dismiss();
 					}
 					self::send( array( 'backups' => Backups::all() ) );
 					break;
 
 				case 'log':
-					self::send( array( 'log' => ( new Restore( self::job() ) )->log_text() ) );
+					self::send( array( 'log' => Runner::of( self::job() )->log_text() ) );
 					break;
 
 				default:
@@ -295,7 +346,7 @@ final class Plugin {
 	private static function job() {
 		$job = Job::current();
 		if ( ! $job ) {
-			self::fail( __( 'There is no restore in progress.', 'wpress-restore' ), 'no_job', 404 );
+			self::fail( __( 'There is no backup or restore in progress.', 'wpress-restore' ), 'no_job', 404 );
 		}
 		return $job;
 	}

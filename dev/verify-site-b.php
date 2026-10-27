@@ -2,10 +2,14 @@
 /**
  * Checks site B after restoring site A's backup: run with `wp eval-file`.
  * Prints one line per check and exits non-zero if any fails.
+ *   wp eval-file verify-site-b.php          after a restore by WPress Restore
+ *   wp eval-file verify-site-b.php ai1wm    after an import by All-in-One WP Migration, which
+ *                                           activates itself and rebuilds the permalinks
  */
 
 global $wpdb;
-$checks = array();
+$by_ai1wm = isset( $args[0] ) && 'ai1wm' === $args[0];
+$checks   = array();
 $check  = static function ( $label, $ok, $detail = '' ) use ( &$checks ) {
 	$checks[] = array( $ok, $label, $detail );
 };
@@ -16,7 +20,11 @@ $check( 'keeps its own address', get_option( 'siteurl' ) === $expected_home && g
 $check( 'has the backup\'s content', 'Site A restored' === get_option( 'blogname' ), get_option( 'blogname' ) );
 $check( 'runs the backup\'s theme', 'twentytwentyfour' === get_option( 'stylesheet' ), get_option( 'stylesheet' ) );
 $plugins = (array) get_option( 'active_plugins' );
-$check( 'runs the backup\'s plugins and this one', array( 'akismet/akismet.php', 'hello.php', 'wpress-restore/wpress-restore.php' ) === $plugins, implode( ', ', $plugins ) );
+$wanted  = array( 'akismet/akismet.php', 'hello.php', $by_ai1wm ? 'all-in-one-wp-migration/all-in-one-wp-migration.php' : 'wpress-restore/wpress-restore.php' );
+$sorted  = $plugins;
+sort( $wanted );
+sort( $sorted );
+$check( 'runs the backup\'s plugins and the importer', $wanted === $sorted, implode( ', ', $plugins ) );
 
 $roles = get_option( $wpdb->prefix . 'user_roles' );
 $check( 'roles live under this site\'s prefix', is_array( $roles ) && isset( $roles['administrator'] ), $wpdb->prefix . 'user_roles' );
@@ -53,7 +61,9 @@ $photo = wp_get_upload_dir()['basedir'] . '/2026/10/photo.jpg';
 $check( 'binary upload identical', is_file( $photo ) && '741e488cd5c1a98c78125fc2e1db886e4dfc26ad' === sha1_file( $photo ) );
 $check( 'the backup\'s must-use plugin is in place', is_file( WPMU_PLUGIN_DIR . '/site-tweaks.php' ) );
 $check( 'the guard is gone', ! is_file( WPMU_PLUGIN_DIR . '/wpress-restore-guard.php' ) );
-$check( 'rewrite rules left to regenerate', ! $wpdb->get_var( "SELECT option_value FROM {$wpdb->options} WHERE option_name = 'rewrite_rules'" ) );
+if ( ! $by_ai1wm ) {
+	$check( 'rewrite rules left to regenerate', ! $wpdb->get_var( "SELECT option_value FROM {$wpdb->options} WHERE option_name = 'rewrite_rules'" ) );
+}
 
 $failed = 0;
 foreach ( $checks as $line ) {

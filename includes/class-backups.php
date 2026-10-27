@@ -16,10 +16,11 @@ final class Backups {
 	/**
 	 * Backups, newest first; unfinished uploads are flagged as partial.
 	 *
-	 * @return array[] name, size, mtime, partial.
+	 * @return array[] name, size, mtime, partial, url (to download it, null when the folder has no address).
 	 */
 	public static function all() {
 		$dir  = Site::backups_dir();
+		$base = self::base_url();
 		$list = array();
 		foreach ( is_dir( $dir ) ? (array) scandir( $dir ) : array() as $name ) {
 			$partial = (bool) preg_match( '/\.wpress\.part$/i', $name );
@@ -31,6 +32,7 @@ final class Backups {
 				'size'    => (int) filesize( $dir . '/' . $name ),
 				'mtime'   => (int) filemtime( $dir . '/' . $name ),
 				'partial' => $partial,
+				'url'     => null === $base || $partial ? null : $base . '/' . rawurlencode( $name ),
 			);
 		}
 		usort(
@@ -40,6 +42,26 @@ final class Backups {
 			}
 		);
 		return $list;
+	}
+
+	/**
+	 * The backups folder's web address, as All-in-One WP Migration links its downloads: the web
+	 * server sends the file, so no PHP time limit cuts a large download. The folder refuses
+	 * listings, and backup names end with a random part.
+	 *
+	 * @return string|null Null when the folder is outside the site.
+	 */
+	public static function base_url() {
+		$dir = wp_normalize_path( Site::backups_dir() );
+		foreach ( array(
+			'content_url' => wp_normalize_path( untrailingslashit( WP_CONTENT_DIR ) ),
+			'site_url'    => wp_normalize_path( untrailingslashit( ABSPATH ) ),
+		) as $url => $root ) {
+			if ( 0 === strpos( $dir . '/', $root . '/' ) ) {
+				return untrailingslashit( $url( implode( '/', array_map( 'rawurlencode', explode( '/', substr( $dir, strlen( $root ) ) ) ) ) ) );
+			}
+		}
+		return null;
 	}
 
 	/**

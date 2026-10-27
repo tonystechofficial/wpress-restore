@@ -1,8 +1,8 @@
 /**
- * WPress Restore admin page: backups list, chunked upload, and the restore loop.
+ * WPress Restore admin page: backups list, chunked upload, and the backup and restore loop.
  *
- * Every server call is one short request; the restore advances by calling "step" until the
- * job leaves its working statuses. Texts come translated from PHP (window.wpressRestore.i18n).
+ * Every server call is one short request; a job advances by calling "step" until it leaves its
+ * working statuses. Texts come translated from PHP (window.wpressRestore.i18n).
  */
 ( function () {
 	'use strict';
@@ -12,7 +12,8 @@
 		return;
 	}
 	var t = cfg.i18n;
-	var WORKING = [ 'scanning', 'verifying', 'extracting_db', 'importing_db', 'extracting_files', 'finalizing' ];
+	var EXPORT_PHASES = [ 'listing', 'dumping', 'packing', 'sealing' ];
+	var WORKING = [ 'scanning', 'verifying', 'extracting_db', 'importing_db', 'extracting_files', 'finalizing' ].concat( EXPORT_PHASES );
 	var BEFORE_CONFIRM = [ 'scanning', 'verifying' ];
 	var AFTER_CONFIRM = [ 'extracting_db', 'importing_db', 'extracting_files', 'finalizing' ];
 	var state = { job: cfg.job, backups: cfg.backups, running: false, uploading: false };
@@ -124,15 +125,25 @@
 		window.alert( error.message || String( error ) );
 	}
 
+	function isExport( job ) {
+		return !! job && 'export' === job.type;
+	}
+
 	/* Backups */
 
 	var table = document.getElementById( 'wpr-backups' );
+	var createButton = document.getElementById( 'wpr-create' );
 
 	function jobBlocks() {
 		return state.job && 'done' !== state.job.status;
 	}
 
+	function downloadLink( backup, primary ) {
+		return el( 'a', { className: primary ? 'button button-primary' : 'button', href: backup.url, download: backup.name }, t.download );
+	}
+
 	function renderBackups() {
+		createButton.disabled = jobBlocks() || state.uploading;
 		table.textContent = '';
 		if ( ! state.backups.length ) {
 			table.appendChild( el( 'tr', {}, el( 'td', { colspan: 4 }, t.noBackups ) ) );
@@ -146,6 +157,9 @@
 				}, true );
 				restore.disabled = jobBlocks() || state.uploading;
 				actions.push( restore );
+				if ( backup.url ) {
+					actions.push( downloadLink( backup, false ) );
+				}
 			}
 			var remove = button( t['delete'], function () {
 				if ( window.confirm( format( t.confirmDelete, backup.name ) ) ) {
@@ -256,7 +270,41 @@
 		renderBackups();
 	}
 
-	/* Restore */
+	/* Create a backup */
+
+	function checked( id ) {
+		return document.getElementById( id ).checked ? '1' : '0';
+	}
+
+	createButton.addEventListener( 'click', function () {
+		var password = document.getElementById( 'wpr-export-password' );
+		var repeat = document.getElementById( 'wpr-export-password2' );
+		if ( password && password.value !== repeat.value ) {
+			report( { message: t.passwordsDiffer } );
+			return;
+		}
+		createButton.disabled = true;
+		call( 'export_start', {
+			no_media: checked( 'wpr-no-media' ),
+			no_post_revisions: checked( 'wpr-no-revisions' ),
+			no_spam_comments: checked( 'wpr-no-spam' ),
+			no_cache: checked( 'wpr-no-cache' ),
+			compression: document.getElementById( 'wpr-compression' ).value,
+			password: password ? password.value : '',
+		} ).then( function ( data ) {
+			if ( password ) {
+				password.value = '';
+				repeat.value = '';
+			}
+			setJob( data.job );
+			run();
+		}, function ( error ) {
+			createButton.disabled = jobBlocks() || state.uploading;
+			report( error );
+		} );
+	} );
+
+	/* Jobs: restore and backup */
 
 	var panel = document.getElementById( 'wpr-job' );
 
@@ -295,6 +343,9 @@
 					break; // Cancelled while this step ran: its answer is stale.
 				}
 				failures = 0;
+				if ( data.backups ) {
+					state.backups = data.backups;
+				}
 				setJob( data.job );
 				if ( data.busy ) {
 					renderJob( t.busy );
@@ -337,7 +388,7 @@
 
 	function cancelButton() {
 		return button( t.cancel, function () {
-			if ( window.confirm( t.confirmCancel ) ) {
+			if ( window.confirm( isExport( state.job ) ? t.confirmCancelExport : t.confirmCancel ) ) {
 				state.running = false;
 				act( 'cancel' ).catch( report );
 			}
@@ -354,7 +405,12 @@
 	}
 
 	function phaseList( current ) {
-		var phases = -1 !== BEFORE_CONFIRM.indexOf( current ) ? BEFORE_CONFIRM : AFTER_CONFIRM;
+		var phases = AFTER_CONFIRM;
+		if ( -1 !== EXPORT_PHASES.indexOf( current ) ) {
+			phases = EXPORT_PHASES;
+		} else if ( -1 !== BEFORE_CONFIRM.indexOf( current ) ) {
+			phases = BEFORE_CONFIRM;
+		}
 		var reached = false;
 		return el(
 			'ol',
@@ -374,9 +430,10 @@
 			return el( 'div', { className: 'wpr-bar wpr-indeterminate' }, el( 'span' ) );
 		}
 		var percent = Math.min( 100, Math.floor( ( progress[ 0 ] / progress[ 1 ] ) * 100 ) );
+		var done = 'tables' === progress[ 2 ] ? format( t.tablesOf, count( progress[ 0 ] ), count( progress[ 1 ] ) ) : format( t.of, bytes( progress[ 0 ] ), bytes( progress[ 1 ] ) );
 		return el( 'div', {}, [
 			el( 'div', { className: 'wpr-bar' }, el( 'span', { style: 'width:' + percent + '%' } ) ),
-			el( 'p', { className: 'wpr-muted' }, format( t.of, bytes( progress[ 0 ] ), bytes( progress[ 1 ] ) ) + ' (' + percent + ' %)' ),
+			el( 'p', { className: 'wpr-muted' }, done + ' (' + percent + ' %)' ),
 		] );
 	}
 
@@ -387,13 +444,17 @@
 		if ( ! job ) {
 			return;
 		}
-		panel.appendChild( el( 'h2', {}, format( 'done' === job.status ? t.restoredFrom : t.restoring, job.backup ) ) );
+		var title = 'done' === job.status ? t.restoredFrom : t.restoring;
+		if ( isExport( job ) ) {
+			title = 'done' === job.status ? t.exported : t.exporting;
+		}
+		panel.appendChild( el( 'h2', {}, format( title, job.backup ) ) );
 		if ( -1 !== WORKING.indexOf( job.status ) ) {
 			renderWorking( job, message, isError );
 		} else if ( 'ready' === job.status ) {
 			renderSummary( job );
 		} else if ( 'done' === job.status ) {
-			renderDone( job );
+			( isExport( job ) ? renderExported : renderDone )( job );
 		} else if ( 'failed' === job.status ) {
 			renderFailed( job );
 		}
@@ -407,13 +468,16 @@
 		}
 		panel.appendChild( phaseList( job.status ) );
 		panel.appendChild( progressBar( job.progress ) );
+		if ( 'listing' === job.status && job.listed ) {
+			panel.appendChild( el( 'p', { className: 'wpr-muted' }, format( t.listed, count( job.listed[ 0 ] ), bytes( job.listed[ 1 ] ) ) ) );
+		}
 		if ( message ) {
 			panel.appendChild( el( 'p', { className: isError ? 'wpr-status wpr-error' : 'wpr-status wpr-warning' }, message ) );
 		}
 		var buttons = el( 'p', { className: 'wpr-buttons' } );
 		if ( ! state.running ) {
 			if ( ! message ) {
-				panel.appendChild( el( 'p', { className: 'wpr-status wpr-warning' }, t.paused ) );
+				panel.appendChild( el( 'p', { className: 'wpr-status wpr-warning' }, isExport( job ) ? t.exportPaused : t.paused ) );
 			}
 			buttons.appendChild( button( t.resume, run, true ) );
 		}
@@ -540,10 +604,42 @@
 		panel.appendChild( logHolder );
 	}
 
+	function renderExported( job ) {
+		var r = job.result || {};
+		var logHolder = el( 'div' );
+		var backup = state.backups.filter( function ( item ) {
+			return item.name === job.backup;
+		} )[ 0 ];
+		panel.appendChild( el( 'div', { className: 'notice notice-success inline' }, el( 'p', {}, el( 'strong', {}, t.exportDoneTitle ) ) ) );
+		var lines = [ format( t.exportSize, bytes( r.size ) ), format( t.exportContent, count( r.files ), count( r.tables ), count( r.rows ) ) ];
+		if ( r.missing ) {
+			lines.push( format( t.exportMissing, count( r.missing ) ) );
+		}
+		if ( r.encrypted ) {
+			lines.push( t.exportEncrypted );
+		}
+		lines.push( backup && backup.url ? t.exportKeep : t.exportNoLink );
+		panel.appendChild( el( 'ul', { className: 'wpr-list' }, lines.map( function ( line ) {
+			return el( 'li', {}, line );
+		} ) ) );
+		var buttons = el( 'p', { className: 'wpr-buttons' } );
+		if ( backup && backup.url ) {
+			buttons.appendChild( downloadLink( backup, true ) );
+		}
+		buttons.appendChild( button( t.dismiss, function () {
+			act( 'dismiss' ).catch( report );
+		} ) );
+		buttons.appendChild( logButton( logHolder ) );
+		panel.appendChild( buttons );
+		panel.appendChild( logHolder );
+	}
+
 	function renderFailed( job ) {
 		var logHolder = el( 'div' );
-		panel.appendChild( el( 'div', { className: 'notice notice-error inline' }, [ el( 'p', {}, el( 'strong', {}, t.failedTitle ) ), el( 'p', {}, job.error ) ] ) );
-		if ( ! job.switching ) {
+		panel.appendChild( el( 'div', { className: 'notice notice-error inline' }, [ el( 'p', {}, el( 'strong', {}, isExport( job ) ? t.exportFailedTitle : t.failedTitle ) ), el( 'p', {}, job.error ) ] ) );
+		if ( isExport( job ) ) {
+			panel.appendChild( el( 'p', {}, t.exportFailedSafe ) );
+		} else if ( ! job.switching ) {
 			panel.appendChild( el( 'p', {}, t.failedSafe ) );
 		}
 		panel.appendChild( el( 'p', { className: 'wpr-buttons' }, [
@@ -559,7 +655,7 @@
 	window.addEventListener( 'beforeunload', function ( event ) {
 		if ( state.running || state.uploading ) {
 			event.preventDefault();
-			event.returnValue = t.leaveWarning;
+			event.returnValue = state.running && isExport( state.job ) ? t.leaveWarningExport : t.leaveWarning;
 		}
 	} );
 
