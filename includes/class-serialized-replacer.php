@@ -58,12 +58,18 @@ final class Serialized_Replacer {
 	}
 
 	/**
-	 * The searched strings.
+	 * The searched strings whose replacement differs: a value holding none of them cannot change.
 	 *
 	 * @return string[]
 	 */
-	public function needles() {
-		return array_map( 'strval', array_keys( $this->pairs ) );
+	public function changing_needles() {
+		$needles = array();
+		foreach ( $this->pairs as $from => $to ) {
+			if ( (string) $from !== $to ) {
+				$needles[] = (string) $from;
+			}
+		}
+		return $needles;
 	}
 
 	/**
