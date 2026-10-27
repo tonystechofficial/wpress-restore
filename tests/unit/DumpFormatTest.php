@@ -58,6 +58,36 @@ final class DumpFormatTest extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider columns
+	 */
+	public function test_types_generated_columns_apart_from_columns_with_computed_defaults( $type, $extra, $expected ) {
+		$this->assertSame( $expected, Dump_Format::column_type( $type, $extra ) );
+	}
+
+	public function columns() {
+		return array(
+			'stored generated (MySQL, MariaDB)' => array( 'decimal(10,2)', 'STORED GENERATED', Dump_Format::GENERATED ),
+			'virtual generated'                 => array( 'varchar(30)', 'VIRTUAL GENERATED', Dump_Format::GENERATED ),
+			'persistent generated (MariaDB)'    => array( 'int(11)', 'PERSISTENT GENERATED', Dump_Format::GENERATED ),
+			'default CURRENT_TIMESTAMP, MySQL 8' => array( 'datetime', 'DEFAULT_GENERATED', 'datetime' ),
+			'default and on update'             => array( 'timestamp', 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP', 'timestamp' ),
+			'auto increment'                    => array( 'bigint unsigned', 'auto_increment', 'bigint unsigned' ),
+			'plain'                             => array( 'longtext', '', 'longtext' ),
+		);
+	}
+
+	public function test_lets_the_server_compute_generated_columns() {
+		// MySQL refuses any other value for a generated column; DEFAULT recomputes it.
+		$this->assertSame( "INSERT INTO `t` VALUES (1,2.50,DEFAULT,DEFAULT);\n", Dump_Format::insert( 't', array( '1', '2.50', '5.00', null ), array( 'int', 'decimal(8,2)', Dump_Format::GENERATED, Dump_Format::GENERATED ) ) );
+	}
+
+	public function test_a_server_that_folds_table_names_matches_the_prefix_in_any_case() {
+		// lower_case_table_names=1 stores wp-config's WP_ prefix as wp_.
+		$this->assertSame( 'SERVMASK_PREFIX_options', Dump_Format::table_name( 'wp_options', 'WP_', true ) );
+		$this->assertSame( 'wp_options', Dump_Format::table_name( 'wp_options', 'WP_' ), 'only where the server folds names' );
+	}
+
 	public function test_renames_a_table_definition() {
 		$sql = Dump_Format::create_table( "CREATE TABLE `wp_options` (\n  `option_id` bigint\n) ENGINE=InnoDB COMMENT='wp_options'", 'wp_options', 'SERVMASK_PREFIX_options' );
 

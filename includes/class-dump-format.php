@@ -29,6 +29,21 @@ final class Dump_Format {
 
 	const BINARY = array( 'binary', 'varbinary', 'tinyblob', 'blob', 'mediumblob', 'longblob', 'bit', 'geometry', 'point', 'linestring', 'polygon', 'multipoint', 'multilinestring', 'multipolygon', 'geometrycollection' );
 
+	/** Type given to generated columns, whose value the server computes. */
+	const GENERATED = 'generated';
+
+	/**
+	 * A column's type for the dump: generated columns apart. MySQL 8 also marks columns whose
+	 * default is an expression (DEFAULT CURRENT_TIMESTAMP) as DEFAULT_GENERATED; those keep their values.
+	 *
+	 * @param string $type  Type, as SHOW COLUMNS lists it.
+	 * @param string $extra Extra, as SHOW COLUMNS lists it.
+	 * @return string
+	 */
+	public static function column_type( $type, $extra ) {
+		return preg_match( '/\b(?:VIRTUAL|STORED|PERSISTENT)\s+GENERATED\b/i', (string) $extra ) ? self::GENERATED : $type;
+	}
+
 	/**
 	 * The dump's opening comment.
 	 *
@@ -43,10 +58,14 @@ final class Dump_Format {
 	 * A column value as a SQL literal.
 	 *
 	 * @param string|null $value Value as the server returns it.
-	 * @param string      $type  Column type, as SHOW COLUMNS lists it.
+	 * @param string      $type  Column type, from column_type().
 	 * @return string
 	 */
 	public static function value( $value, $type ) {
+		// The server refuses any value for a generated column but DEFAULT, which computes it again.
+		if ( self::GENERATED === $type ) {
+			return 'DEFAULT';
+		}
 		if ( null === $value ) {
 			return 'NULL';
 		}
@@ -81,13 +100,15 @@ final class Dump_Format {
 	 *
 	 * @param string $name   Table name.
 	 * @param string $prefix Site prefix.
+	 * @param bool   $fold   Whether the server compares table names without case.
 	 * @return string
 	 */
-	public static function table_name( $name, $prefix ) {
+	public static function table_name( $name, $prefix, $fold = false ) {
 		if ( '' === $prefix ) {
 			return self::PLACEHOLDER . $name;
 		}
-		return 0 === strpos( $name, $prefix ) ? self::PLACEHOLDER . substr( $name, strlen( $prefix ) ) : $name;
+		$starts = $fold ? 0 === stripos( $name, $prefix ) : 0 === strpos( $name, $prefix );
+		return $starts ? self::PLACEHOLDER . substr( $name, strlen( $prefix ) ) : $name;
 	}
 
 	/**
