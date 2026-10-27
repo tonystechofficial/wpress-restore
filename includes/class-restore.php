@@ -113,6 +113,7 @@ final class Restore {
 		if ( ! $this->job->lock() ) {
 			return false;
 		}
+		$this->job->reload();
 		$status = $this->job->get( 'status' );
 		try {
 			if ( isset( self::PHASES[ $status ] ) ) {
@@ -139,56 +140,74 @@ final class Restore {
 	 * @throws \RuntimeException "password" when it does not open the backup.
 	 */
 	public function confirm( $password ) {
-		if ( 'ready' !== $this->job->get( 'status' ) ) {
-			throw new \RuntimeException( 'This restore is not waiting for confirmation.' );
-		}
-		$package = $this->package();
-		if ( $package->is_encrypted() ) {
-			if ( '' === $password || ! Codec::password_matches( $package->signature(), $password ) ) {
-				throw new \RuntimeException( 'password' );
+		$this->job->lock( true );
+		try {
+			$this->job->reload();
+			if ( 'ready' !== $this->job->get( 'status' ) ) {
+				throw new \RuntimeException( 'This restore is not waiting for confirmation.' );
 			}
-			$this->job->set( 'password', $password );
-		}
-		$db  = new Database();
-		$tag = '';
-		do {
-			$tag = bin2hex( random_bytes( 3 ) );
-		} while ( $db->tables( 'wpr' . $tag ) || $db->tables( 'wpo' . $tag ) );
-		$this->job->set( 'temp_prefix', 'wpr' . $tag . '_' );
+			$package = $this->package();
+			if ( $package->is_encrypted() ) {
+				if ( '' === $password || ! Codec::password_matches( $package->signature(), $password ) ) {
+					throw new \RuntimeException( 'password' );
+				}
+				$this->job->set( 'password', $password );
+			}
+			$db = new Database();
+			do {
+				$tag = bin2hex( random_bytes( 3 ) );
+			} while ( $db->tables( 'wpr' . $tag ) || $db->tables( 'wpo' . $tag ) );
+			$this->job->set( 'temp_prefix', 'wpr' . $tag . '_' );
 
-		$guarded = Guard::install();
-		$this->job->set( 'status', isset( $this->job->get( 'scan' )['entries']['database.sql'] ) ? 'extracting_db' : 'extracting_files' );
-		$this->job->log( 'Restore confirmed.' . ( $guarded ? '' : ' The guard could not be written in mu-plugins: other plugins stay loaded during the restore.' ) );
-		$this->job->save();
+			$guarded = Guard::install();
+			$this->job->set( 'status', isset( $this->job->get( 'scan' )['entries']['database.sql'] ) ? 'extracting_db' : 'extracting_files' );
+			$this->job->log( 'Restore confirmed.' . ( $guarded ? '' : ' The guard could not be written in mu-plugins: other plugins stay loaded during the restore.' ) );
+			$this->job->save();
+		} finally {
+			$this->job->unlock();
+		}
 	}
 
 	/** Resumes a failed restore where it stopped. */
 	public function retry() {
-		if ( 'failed' === $this->job->get( 'status' ) && $this->job->get( 'failed_during' ) ) {
-			$this->job->set( 'status', $this->job->get( 'failed_during' ) );
-			$this->job->set( 'error', null );
-			$this->job->log( 'Retrying.' );
-			$this->job->save();
+		$this->job->lock( true );
+		try {
+			$this->job->reload();
+			if ( 'failed' === $this->job->get( 'status' ) && $this->job->get( 'failed_during' ) ) {
+				$this->job->set( 'status', $this->job->get( 'failed_during' ) );
+				$this->job->set( 'error', null );
+				$this->job->log( 'Retrying.' );
+				$this->job->save();
+			}
+		} finally {
+			$this->job->unlock();
 		}
 	}
 
 	/**
 	 * Abandons the restore: the temporary tables and the job go away. Files already written stay.
+	 * Waits for a running step to end first.
 	 *
 	 * @throws \RuntimeException Once the site has started switching to the restored database.
 	 */
 	public function cancel() {
-		if ( $this->job->get( 'swapping' ) && 'done' !== $this->job->get( 'status' ) ) {
-			throw new \RuntimeException( 'The site is switching to the restored database: this can no longer be cancelled. Retry instead.' );
-		}
-		if ( 'done' !== $this->job->get( 'status' ) && $this->job->get( 'temp_prefix' ) ) {
-			$db = new Database();
-			foreach ( $db->tables( $this->job->get( 'temp_prefix' ) ) as $table ) {
-				$db->query( 'DROP TABLE IF EXISTS `' . $table . '`' );
+		$this->job->lock( true );
+		try {
+			$this->job->reload();
+			if ( $this->job->get( 'swapping' ) && 'done' !== $this->job->get( 'status' ) ) {
+				throw new \RuntimeException( 'The site is switching to the restored database: this can no longer be cancelled. Retry instead.' );
 			}
+			if ( 'done' !== $this->job->get( 'status' ) && $this->job->get( 'temp_prefix' ) ) {
+				$db = new Database();
+				foreach ( $db->tables( $this->job->get( 'temp_prefix' ) ) as $table ) {
+					$db->query( 'DROP TABLE IF EXISTS `' . $table . '`' );
+				}
+			}
+			Guard::remove();
+			$this->job->delete();
+		} finally {
+			$this->job->unlock();
 		}
-		Guard::remove();
-		$this->job->delete();
 	}
 
 	/**
@@ -243,7 +262,8 @@ final class Restore {
 			case 'importing_db':
 				return array( $get( array( 'db', 'offset' ) ), $get( array( 'db', 'size' ) ) );
 			case 'extracting_files':
-				return array( $get( array( 'files', 'processed' ) ), $get( array( 'scan', 'bytes' ) ) );
+				// Count the file being written too: one large video can be most of a backup.
+				return array( $get( array( 'files', 'processed' ) ) + $get( array( 'files', 'entry', 'stored' ) ), $get( array( 'scan', 'bytes' ) ) );
 		}
 		return null;
 	}
@@ -479,7 +499,7 @@ final class Restore {
 			)
 		);
 		$dump   = fopen( $this->job->path( 'database.sql' ), 'rb' );
-		$reader = new Sql_Reader( $dump, $state['offset'], max( MB_IN_BYTES, $db->max_allowed_packet() - 1024 ) );
+		$reader = new Sql_Reader( $dump, $state['offset'], self::statement_limit( $db->max_allowed_packet() ) );
 		$done   = false;
 		$saved  = microtime( true );
 		$db->query( 'START TRANSACTION' );
@@ -767,6 +787,10 @@ final class Restore {
 		$this->set_option( $db, $options, 'home', '' !== $live['home'] ? $live['home'] : home_url() );
 		$this->set_option( $db, $options, 'upload_path', $live['upload_path'] );
 		$this->set_option( $db, $options, 'upload_url_path', $live['upload_url_path'] );
+		// All-in-One WP Migration leaves its own settings out of its backups and keeps them across an import.
+		foreach ( $db->rows( "SELECT option_name, option_value FROM `{$prefix}options` WHERE option_name IN ('ai1wm_secret_key', 'ai1wm_auth_user', 'ai1wm_auth_password', 'ai1wm_auth_header', 'ai1wm_backups_path', 'ai1wm_backups_labels', 'ai1wm_sites_links')" ) as $row ) {
+			$this->set_option( $db, $options, $row['option_name'], $row['option_value'] );
+		}
 
 		// ai1wm empties the theme and the active plugins in its dump and records them in package.json.
 		$theme = Theme_Choice::pick(
@@ -962,6 +986,19 @@ final class Restore {
 		if ( '' !== $data && fwrite( $handle, $data ) !== strlen( $data ) ) {
 			throw new \RuntimeException( 'Writing failed: the disk is probably full. Free some space, then retry.' );
 		}
+	}
+
+	/**
+	 * Largest statement to run: what the server accepts, within what PHP memory allows, since a
+	 * statement is copied a few times while its addresses are rewritten.
+	 *
+	 * @param int $max_allowed_packet Server limit.
+	 * @return int
+	 */
+	private static function statement_limit( $max_allowed_packet ) {
+		$memory = wp_convert_hr_to_bytes( (string) ini_get( 'memory_limit' ) );
+		$room   = $memory > 0 ? max( 16 * MB_IN_BYTES, (int) ( ( $memory - memory_get_usage() ) / 5 ) ) : 256 * MB_IN_BYTES;
+		return max( MB_IN_BYTES, min( $max_allowed_packet - 1024, $room ) );
 	}
 
 	/** @return bool Whether this step has used its time. */

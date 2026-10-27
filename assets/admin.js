@@ -281,9 +281,12 @@
 		state.running = true;
 		renderJob();
 		var failures = 0;
-		while ( state.job && -1 !== WORKING.indexOf( state.job.status ) ) {
+		while ( state.running && state.job && -1 !== WORKING.indexOf( state.job.status ) ) {
 			try {
 				var data = await call( 'step' );
+				if ( ! state.running ) {
+					break; // Cancelled while this step ran: its answer is stale.
+				}
 				failures = 0;
 				setJob( data.job );
 				if ( data.busy ) {
@@ -291,6 +294,9 @@
 					await sleep( 3000 );
 				}
 			} catch ( error ) {
+				if ( ! state.running ) {
+					break;
+				}
 				if ( ( 'network' === error.code || 'server' === error.code ) && ++failures <= 5 ) {
 					renderJob( format( t.retrying, failures * 5 ) );
 					await sleep( failures * 5000 );
@@ -367,7 +373,7 @@
 		if ( ! job ) {
 			return;
 		}
-		panel.appendChild( el( 'h2', {}, format( t.restoring, job.backup ) ) );
+		panel.appendChild( el( 'h2', {}, format( 'done' === job.status ? t.restoredFrom : t.restoring, job.backup ) ) );
 		if ( -1 !== WORKING.indexOf( job.status ) ) {
 			renderWorking( job, message, isError );
 		} else if ( 'ready' === job.status ) {

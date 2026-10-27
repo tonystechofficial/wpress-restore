@@ -38,6 +38,7 @@ final class Strings {
 			),
 			'of'             => __( '%1$s of %2$s', 'wpress-restore' ),
 			'restoring'      => __( 'Restoring %s', 'wpress-restore' ),
+			'restoredFrom'   => __( 'Restored from %s', 'wpress-restore' ),
 			'cancel'         => __( 'Cancel', 'wpress-restore' ),
 			'retry'          => __( 'Retry', 'wpress-restore' ),
 			'resume'         => __( 'Resume', 'wpress-restore' ),

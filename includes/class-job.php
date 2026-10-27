@@ -84,6 +84,14 @@ final class Job {
 		return $job;
 	}
 
+	/** Reads the state again: another request may have saved it since this one loaded it. */
+	public function reload() {
+		$state = json_decode( (string) @file_get_contents( $this->path( 'job.json' ) ), true ); // phpcs:ignore WordPress.PHP.NoSilencedErrors -- a deleted job keeps its last state.
+		if ( is_array( $state ) ) {
+			$this->state = $state;
+		}
+	}
+
 	/**
 	 * Path of a file in the job folder.
 	 *
@@ -144,13 +152,19 @@ final class Job {
 	}
 
 	/**
-	 * Takes the step lock, so two tabs cannot run steps at once.
+	 * Takes the step lock, so two tabs, or a step and a cancel, never work on the job at once.
 	 *
-	 * @return bool False when another request holds it.
+	 * @param bool $wait Whether to wait for a running step to finish (a step lasts seconds).
+	 * @return bool False when another request holds it and $wait is false.
 	 */
-	public function lock() {
+	public function lock( $wait = false ) {
 		$this->lock = fopen( $this->path( 'lock' ), 'c' );
-		return $this->lock && flock( $this->lock, LOCK_EX | LOCK_NB );
+		if ( ! $this->lock ) {
+			return true;
+		}
+		$busy = false;
+		// Only a held lock means busy: where the filesystem cannot lock at all, the restore still runs.
+		return flock( $this->lock, $wait ? LOCK_EX : LOCK_EX | LOCK_NB, $busy ) || ! $busy;
 	}
 
 	/** Releases the step lock. */
