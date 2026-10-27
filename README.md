@@ -6,7 +6,7 @@ Put the backup in `wp-content/ai1wm-backups/` by FTP or SFTP (or send it with th
 
 ## Install
 
-1. Build the zip: `python bin/build.py` → `dist/wpress-restore.zip`. Or take the zip handed to you.
+1. Download `wpress-restore.zip` from the [latest release](https://github.com/tonystechofficial/wpress-restore/releases/latest), or build it: `python bin/build.py` → `dist/wpress-restore.zip`.
 2. In WordPress: **Plugins → Add New → Upload Plugin**, choose the zip, activate.
 
 Requirements: WordPress 5.6+, PHP 7.4+ (64-bit for backups of 2 GB or more), a single site (not a network), plugin installs allowed (no `DISALLOW_FILE_MODS`, since a restore writes plugins and themes), and WordPress's standard database connection (not a HyperDB, LudicrousDB or SQLite drop-in).

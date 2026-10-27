@@ -1,6 +1,7 @@
 <?php
 /**
  * Plugin Name:       WPress Restore
+ * Plugin URI:        https://github.com/tonystechofficial/wpress-restore
  * Description:       Restores All-in-One WP Migration backups (.wpress) of any size. Upload by FTP or in small pieces, pick a backup, restore: the database is imported beside the live one and switched in at the end.
  * Version:           1.0.0
  * Requires at least: 5.6
