@@ -32,6 +32,32 @@ final class CodecTest extends TestCase {
 		$this->assertTrue( Codec::from_key( null, null )->is_plain() );
 	}
 
+	public function test_an_encrypted_full_chunk_has_the_length_ai1wm_reads() {
+		$stored = ( new Codec( 'pw', null ) )->encode( str_repeat( 'a', Codec::CHUNK ) );
+
+		$this->assertSame( Codec::CHUNK + 2 * Codec::IV_LENGTH, strlen( $stored ) );
+		$this->assertSame( Codec::encrypted_chunk_length( 5 * Codec::CHUNK ), strlen( $stored ) );
+	}
+
+	public function test_a_compressed_chunk_carries_its_length_in_front() {
+		$stored = ( new Codec( null, 'gzip' ) )->encode( str_repeat( 'abc', 1000 ) );
+
+		$this->assertSame( strlen( $stored ) - 4, unpack( 'N', substr( $stored, 0, 4 ) )[1] );
+		$this->assertSame( str_repeat( 'abc', 1000 ), gzuncompress( substr( $stored, 4 ) ) );
+	}
+
+	public function test_plain_chunks_are_stored_as_they_are() {
+		$this->assertSame( 'as is', ( new Codec( null, null ) )->encode( 'as is' ) );
+	}
+
+	public function test_signs_a_password_the_way_ai1wm_checks_it() {
+		$signature = Codec::signature( 'S3cret pass!' );
+		$raw       = base64_decode( $signature );
+
+		$this->assertSame( Ai1wm::SIGN_TEXT, openssl_decrypt( substr( $raw, 16 ), 'AES-256-CBC', substr( sha1( 'S3cret pass!', true ), 0, 16 ), OPENSSL_RAW_DATA, substr( $raw, 0, 16 ) ) );
+		$this->assertTrue( Codec::password_matches( $signature, 'S3cret pass!' ) );
+	}
+
 	public function test_checks_a_password_against_the_package_signature() {
 		$signature = base64_encode( Ai1wm::encrypt( Ai1wm::SIGN_TEXT, 'secret' ) );
 

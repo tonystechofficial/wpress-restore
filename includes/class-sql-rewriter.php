@@ -200,6 +200,11 @@ final class Sql_Rewriter {
 		if ( in_array( $name, $this->included, true ) ) {
 			return array( $this->temp . $name, $name );
 		}
+		foreach ( Dump_Format::OUTSIDE_PREFIX as $outside ) {
+			if ( 0 === strpos( $name, $outside ) ) {
+				return array( $this->temp . $name, $name );
+			}
+		}
 		return null;
 	}
 

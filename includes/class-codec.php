@@ -116,6 +116,43 @@ final class Codec {
 	}
 
 	/**
+	 * Encodes one chunk of content (Codec::CHUNK bytes, the last one shorter) as ai1wm stores it.
+	 *
+	 * @param string $chunk Original content.
+	 * @return string Stored bytes, length prefix included when compressed.
+	 * @throws Archive_Exception When the server cannot compress or encrypt.
+	 */
+	public function encode( $chunk ) {
+		if ( 'gzip' === $this->compression ) {
+			$chunk = gzcompress( $chunk, 6 );
+		} elseif ( 'bzip2' === $this->compression ) {
+			$chunk = function_exists( 'bzcompress' ) ? bzcompress( $chunk, 9 ) : false;
+		}
+		if ( ! is_string( $chunk ) ) {
+			throw new Archive_Exception( sprintf( 'This server cannot compress with %s.', $this->compression ) );
+		}
+		if ( null !== $this->key ) {
+			$iv     = random_bytes( self::IV_LENGTH );
+			$cipher = openssl_encrypt( $chunk, self::CIPHER, $this->key, OPENSSL_RAW_DATA, $iv );
+			if ( false === $cipher ) {
+				throw new Archive_Exception( 'This server cannot encrypt the backup.' );
+			}
+			$chunk = $iv . $cipher;
+		}
+		return null === $this->compression ? $chunk : pack( 'N', strlen( $chunk ) ) . $chunk;
+	}
+
+	/**
+	 * The EncryptedSignature of package.json: the fixed text, encrypted with the password.
+	 *
+	 * @param string $password Password.
+	 * @return string Base64.
+	 */
+	public static function signature( $password ) {
+		return base64_encode( ( new self( $password, null ) )->encode( self::SIGN_TEXT ) );
+	}
+
+	/**
 	 * Decodes one stored chunk (without the length prefix).
 	 *
 	 * @param string $stored Chunk as stored.

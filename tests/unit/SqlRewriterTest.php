@@ -175,6 +175,23 @@ SQL;
 		);
 	}
 
+	/**
+	 * @dataProvider tables_ai1wm_exports_outside_the_prefix
+	 */
+	public function test_keeps_the_tables_ai1wm_always_exports_outside_the_prefix( $name ) {
+		$result = self::rewriter()->rewrite( "DROP TABLE IF EXISTS `$name`" );
+
+		$this->assertSame( "DROP TABLE IF EXISTS `wprtmp_$name`", $result['sql'] );
+		$this->assertSame( $name, $result['table'] );
+	}
+
+	public function tables_ai1wm_exports_outside_the_prefix() {
+		return array(
+			'webba booking' => array( 'wbk_appointments' ),
+			'civicrm'       => array( 'civicrm_contact' ),
+		);
+	}
+
 	public function test_tables_the_backup_included_keep_their_own_name() {
 		$result = self::rewriter( array( 'included_tables' => array( 'custom_log' ) ) )->rewrite( 'DROP TABLE IF EXISTS `custom_log`' );
 

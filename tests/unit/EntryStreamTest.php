@@ -73,6 +73,20 @@ final class EntryStreamTest extends TestCase {
 		$this->assertSame( $content, $start . self::drain( $resume ) );
 	}
 
+	/**
+	 * @dataProvider codecs
+	 */
+	public function test_reads_what_the_codec_writes_chunk_by_chunk( $password, $compression ) {
+		$content = random_bytes( 1100000 ) . str_repeat( 'x', 300000 );
+		$codec   = new Codec( $password, $compression );
+		$stored  = '';
+		foreach ( str_split( $content, Codec::CHUNK ) as $chunk ) {
+			$stored .= $codec->encode( $chunk );
+		}
+
+		$this->assertSame( $content, self::drain( new Entry_Stream( $this->handle_on( $stored ), 5, strlen( $stored ), 0, $codec ) ) );
+	}
+
 	public function test_an_empty_entry_yields_nothing() {
 		$stream = new Entry_Stream( $this->handle_on( '' ), 5, 0, 0, new Codec( 'pw', 'gzip' ) );
 

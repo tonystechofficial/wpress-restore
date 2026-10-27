@@ -113,9 +113,15 @@ final class Package {
 		return $this->text( array( 'PHP', 'Version' ) );
 	}
 
-	/** @return string Version of All-in-One WP Migration that made the backup. */
+	/** @return string Version of the plugin that made the backup. */
 	public function plugin_version() {
 		return $this->text( array( 'Plugin', 'Version' ) ) ?: $this->text( array( 'Version' ) );
+	}
+
+	/** @return string The plugin that made the backup, and its version. */
+	public function made_with() {
+		$name = $this->text( array( 'Plugin', 'Name' ) );
+		return trim( ( '' === $name ? 'All-in-One WP Migration' : $name ) . ' ' . $this->plugin_version() );
 	}
 
 	/** @return string */

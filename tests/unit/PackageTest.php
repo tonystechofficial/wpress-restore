@@ -21,6 +21,11 @@ final class PackageTest extends TestCase {
 		$this->assertNull( $package->compression() );
 	}
 
+	public function test_names_the_tool_that_made_the_backup() {
+		$this->assertSame( 'All-in-One WP Migration 7.112', Package::from_json( Ai1wm::package() )->made_with() );
+		$this->assertSame( 'All-in-One WP Migration 6.76', Package::from_json( '{"SiteURL":"https://x.example","Version":"6.76"}' )->made_with() );
+	}
+
 	public function test_reads_encryption_and_compression() {
 		$package = Package::from_json(
 			Ai1wm::package(
